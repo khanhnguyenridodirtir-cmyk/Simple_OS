@@ -2,18 +2,18 @@
 1. Mỗi thành viên làm trong 1 nhánh và push code lên nhánh đó, chỉ gộp khi đã test và chốt hoàn tất.
 2. Không code hãy chú thích những điểm quan trọng, nếu có thể hãy viết README.md cho nhánh đó cho mọi người dễ review.
 # Lưu ý chạy và setup
-# demacOprx - OS Simulation for CO2018
+## demacOprx - OS Simulation for CO2018
 
 Operating System Simulation with DMA (Verilator RTL) for HCMC University of Technology Course CO2018.
 
-## Build full OS simulation - The output file ./os
+### Build full OS simulation - The output file ./os
 
 ```bash
 make os    # Build full OS simulation. The output file ./os
 ```
 Run os simulation
 ```bash
-# OS simulation
+## OS simulation
 ./os [configuration_file]
 ```
 
