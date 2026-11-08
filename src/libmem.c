@@ -17,6 +17,7 @@
 #include "syscall.h"
 #include "libmem.h"
 #include "dma.h"
+#include "dpi_rtl.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -464,20 +465,70 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
  *@offset: memory offset
  *@size: copied data size
  */
+/* dma_xlat - dich mot dia chi ao sang dia chi vat ly cho DMA
+ *
+ * DMA la thiet bi tren bus, no khong di qua MMU. Nen truoc khi dua
+ * dia chi cho no, phan mem phai tu dich xong.
+ *
+ * LUU Y khong dung PAGING64_ADDR_OFFST_MASK: mm64.h:57 dinh nghia no
+ * bang PAGING_ADDR_OFFST_HIBIT (ban 32 bit, = 7) thay vi
+ * PAGING64_ADDR_OFFST_HIBIT (= 11), nen mask ra 0xFF thay vi 0xFFF.
+ * Tinh tay tu PAGING64_PAGESZ cho chac, va bao TV2 sua header.
+ */
+static int dma_xlat(struct pcb_t *caller, addr_t vaddr, uint64_t *phyaddr)
+{
+  int fpn = 0;
+  addr_t pgn = vaddr / PAGING64_PAGESZ;
+  addr_t off = vaddr % PAGING64_PAGESZ;
+
+  if (pg_getpage(caller->krnl->mm, (int) pgn, &fpn, caller) != 0)
+    return -1;                       /* trang khong hop le */
+
+  *phyaddr = (uint64_t) fpn * PAGING64_PAGESZ + off;
+  return 0;
+}
+
 int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t offset, uint32_t size)
 {
-  /* TODO: provide DMA mempy */
+  uint64_t sphy = 0, dphy = 0;
 
-  //struct krnl_t *krnl = caller->krnl;
+  if (caller == NULL || caller->mm == NULL || caller->krnl == NULL)
+    return -1;
 
-  /*
-   *  TODO: provide asynchronous dma memcpy
-   *        handling the dma_done_callback
-   */
-  //do_dma(caller, (uint64_t) src, (uint64_t) dst, (uint64_t) size);
-  //krnl->...
-  //krnl->...
+  /* --- 1. region id -> dia chi ao ---------------------------------
+   * src/dst trong "dma_memcpy 1 2 0 4" KHONG phai dia chi, chung la
+   * so hieu vung nho trong bang ky hieu cua process. */
+  struct vm_rg_struct *srcrg = get_symrg_byid(caller->mm, src);
+  struct vm_rg_struct *dstrg = get_symrg_byid(caller->mm, dst);
+  if (srcrg == NULL || dstrg == NULL)
+    return -1;
 
+  /* --- 2. dia chi ao -> dia chi vat ly ----------------------------
+   * Buoc nay phu thuoc pg_getpage()/pte_get_entry() cua TV2.
+   * Khi bang trang chua duoc dien thi no bao loi, ta dung lai o day
+   * thay vi dua dia chi rac cho phan cung. */
+  if (dma_xlat(caller, srcrg->rg_start + offset, &sphy) != 0 ||
+      dma_xlat(caller, dstrg->rg_start + offset, &dphy) != 0) {
+    printf("libmem_dma_memcpy: chua dich duoc dia chi "
+           "(bang trang cua TV2 chua san sang)\n");
+    return -1;
+  }
+
+  /* --- 3. lam tron kich thuoc len boi so 4 ------------------------
+   * Mach chuyen theo nhip 4 byte va nhip cuoi van ghi du 4 byte. */
+  uint32_t len = DMA_LEN_ROUNDUP(size);
+
+  /* --- 4. khoi dong DMA roi TRA VE NGAY ---------------------------
+   * Day la diem mau chot cua yeu cau "asynchronous": ham nay chay
+   * tren thread CPU, no KHONG duoc cho DMA xong. co_processor()
+   * se cap nhip clock va thu ket qua o cac time slot sau. */
+  if (do_dma_start(caller, sphy, dphy, (uint64_t) len) != 0) {
+    printf("libmem_dma_memcpy: kenh DMA dang ban\n");
+    return -1;
+  }
+
+  printf("\tDMA: nap lenh rg%u -> rg%u, %u byte (lam tron %u), CPU chay tiep\n",
+         src, dst, size, len);
   return 0;
 }
 

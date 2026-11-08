@@ -24,6 +24,8 @@ typedef struct {
     uint8_t* data;
     size_t size;
     int initialized;
+    int owns_data;      /* 1 = bank tu malloc, duoc phep free
+                           0 = vung muon cua nguoi khac, TUYET DOI khong free */
 } memory_bank_t_struct;
 
 // Array of memory banks
@@ -61,9 +63,45 @@ memory_bank_t memory_bank_init(size_t size_bytes) {
     g_banks[free_slot].data = data;
     g_banks[free_slot].size = size_bytes;
     g_banks[free_slot].initialized = 1;
+    g_banks[free_slot].owns_data = 1;   /* tu malloc thi tu free */
     g_bank_count++;
 
     printf("Memory bank [%d] initialized: %zu bytes at address %p\n", free_slot, size_bytes, (void*)data);
+    return free_slot;
+}
+
+/* memory_bank_attach - dung vung nho co san lam bank, khong malloc */
+memory_bank_t memory_bank_attach(void *storage, size_t size_bytes) {
+    if (!storage || size_bytes == 0) {
+        printf("memory_bank_attach: vung nho khong hop le\n");
+        return MEMORY_BANK_INVALID;
+    }
+
+    /* Da attach dung vung nay roi thi thoi, tranh chiem them slot.
+     * co_processor() co the goi nhieu lan ma khong sao. */
+    for (int i = 0; i < MAX_MEMORY_BANKS; i++) {
+        if (g_banks[i].initialized && g_banks[i].data == (uint8_t*)storage) {
+            return i;
+        }
+    }
+
+    int free_slot = -1;
+    for (int i = 0; i < MAX_MEMORY_BANKS; i++) {
+        if (!g_banks[i].initialized) { free_slot = i; break; }
+    }
+    if (free_slot == -1) {
+        printf("Maximum number of memory banks (%d) reached\n", MAX_MEMORY_BANKS);
+        return MEMORY_BANK_INVALID;
+    }
+
+    g_banks[free_slot].data        = (uint8_t*) storage;
+    g_banks[free_slot].size        = size_bytes;
+    g_banks[free_slot].initialized = 1;
+    g_banks[free_slot].owns_data   = 0;   /* vung muon - KHONG duoc free */
+    g_bank_count++;
+
+    printf("Memory bank [%d] attached: %zu bytes at address %p (OS RAM)\n",
+           free_slot, size_bytes, storage);
     return free_slot;
 }
 
@@ -71,12 +109,15 @@ memory_bank_t memory_bank_init(size_t size_bytes) {
 void memory_bank_cleanup(void) {
     for (int i = 0; i < MAX_MEMORY_BANKS; i++) {
         if (g_banks[i].initialized) {
-            if (g_banks[i].data) {
+            /* Chi free vung do chinh bank malloc ra. Vung muon cua OS
+             * (os.mram->storage) ma free o day thi OS mat RAM giua chung. */
+            if (g_banks[i].data && g_banks[i].owns_data) {
                 free(g_banks[i].data);
-                g_banks[i].data = NULL;
             }
+            g_banks[i].data = NULL;
             g_banks[i].size = 0;
             g_banks[i].initialized = 0;
+            g_banks[i].owns_data = 0;
             g_bank_count--;
             printf("Memory bank [%d] cleaned up\n", i);
         }
@@ -146,11 +187,20 @@ int dpi_bank_write32_legacy(long long offset, int value) {
 /**
  * DPI Callback: Called from RTL when DMA transfer completes
  */
+static unsigned long g_dma_done_count = 0;
+
 void dma_done_callback(void)
 {
+    /* Ham nay do CHINH MACH goi qua DPI, khong phai code C goi.
+     * No chay dung mot lan moi job, tai suon len cua ch_done
+     * (DepSet_hbdce0907:332-334: ~ch_done_d & ch_done). */
+    g_dma_done_count++;
     printf("DMA completed\n");
     fflush(stdout);   // keep ordering vs. printf_IMPORTANT output
 }
+
+unsigned long dma_done_count(void) { return g_dma_done_count; }
+void          dma_done_reset(void) { g_dma_done_count = 0; }
 
 #ifdef __cplusplus
 }

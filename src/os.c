@@ -32,6 +32,11 @@ static int num_cpus;
 static int done = 0;
 static struct krnl_t os;
 
+/* So CPU con dang chay. co_processor dung no de biet khi nao duoc nghi:
+ * neu no giu time slot mai ma khong detach thi timer_routine se cho
+ * vinh vien va ca he thong treo luc stop_timer(). */
+static volatile int cpu_alive = 0;
+
 #ifdef MM_PAGING
 static unsigned long memramsz;
 static unsigned long memswpsz[PAGING_MAX_MMSWP];
@@ -113,26 +118,60 @@ static void * cpu_routine(void * args) {
 		time_left--;
 		next_slot(timer_id);
 	}
+	__sync_fetch_and_sub(&cpu_alive, 1);
 	detach_event(timer_id);
 	pthread_exit(NULL);
 }
 
 
+/*
+ * co_processor - thread rieng cho DMA, chay SONG SONG voi CPU
+ *
+ * Moi time slot no lam dung ba viec: noi bus neu chua noi, cap mot
+ * nhum chu ky clock cho job dang chay, roi tra slot lai cho timer.
+ * Nho the CPU khong phai dung cho DMA - dung yeu cau cua de:
+ * "Implement the asynchronous interraction mechanism between CPU
+ *  and co-processor."
+ */
 static void * co_processor(void *arg) {
-    (void)arg;
-    /* TODO: Initialize the internal Verilator RTL simulation.
-	 *       This is necessary to ensure that the RTL simulation is ready for DPI calls.
-      */
+    struct timer_id_t * timer_id = (struct timer_id_t *) arg;
+
     if (rtl_dma_init_simulation() != 0) {
         printf("Cannot initialize RTL simulation\n");
+        if (timer_id) detach_event(timer_id);
         return (void*)1;
     }
-	
-	/* TODO: This asynchronous implementation of DMA
-     *        DMA completion callback is not yet implemented in this testbench
-     */
-    // Install callback handler
-    //dma_done_callback();  // Call the callback to signal DMA completion
+
+    int attached = 0;
+
+    while (cpu_alive > 0) {
+        /* ld_routine() moi la cho gan os.mram, va no chay song song
+         * voi thread nay, nen phai doi den khi co RAM roi moi noi bus. */
+        if (!attached && os.mram != NULL && os.mram->storage != NULL) {
+            memory_bank_attach(os.mram->storage, (size_t) os.mram->maxsz);
+            attached = 1;
+        }
+
+        if (dpi_rtl_dma_state() == DMA_JOB_RUNNING) {
+            if (dpi_rtl_dma_tick(DMA_CLK_PER_SLOT)) {
+                printf("\tDMA: chuyen xong %u byte sau %llu chu ky clock\n",
+                       dpi_rtl_dma_bytes(),
+                       (unsigned long long) dpi_rtl_dma_cycles());
+                /* BAT BUOC: state DONE khong tu ve IDLE, phai ha
+                 * ch_enable roi dap them nhip thi mach moi nha kenh. */
+                dpi_rtl_dma_reap();
+            }
+        }
+
+        if (timer_id) next_slot(timer_id);
+        else break;
+    }
+
+    if (timer_id) detach_event(timer_id);
+
+    /* Dong tracer de rtl_trace.vcd thuc su co du lieu.
+     * Ban goc khong goi ham nay o dau ca nen file luon 0 byte. */
+    rtl_dma_cleanup_simulation();
     return NULL;
 }
 
@@ -270,6 +309,12 @@ int main(int argc, char * argv[]) {
 		args[i].id = i;
 	}
 	struct timer_id_t * ld_event = attach_event();
+
+	/* PHAI dang ky truoc start_timer(): attach_event() tra NULL khi
+	 * timer da chay (timer.c:96). Ban goc tao thread co_processor o
+	 * duoi cung main, luc do dang ky da muon. */
+	struct timer_id_t * dma_event = attach_event();
+
 	start_timer();
 
 #ifdef MM_PAGING
@@ -308,19 +353,21 @@ int main(int argc, char * argv[]) {
 #else
 	pthread_create(&ld, NULL, ld_routine, (void*)ld_event);
 #endif
+	cpu_alive = num_cpus;
 	for (i = 0; i < num_cpus; i++) {
 		pthread_create(&cpu[i], NULL,
 			cpu_routine, (void*)&args[i]);
 	}
 
-	/* Run co-processor */
-	pthread_create(dma, NULL, co_processor, NULL);
+	/* Run co-processor - co time slot rieng, chay song song voi CPU */
+	pthread_create(dma, NULL, co_processor, (void*)dma_event);
 
 	/* Wait for CPU and loader finishing */
 	for (i = 0; i < num_cpus; i++) {
 		pthread_join(cpu[i], NULL);
 	}
 	pthread_join(ld, NULL);
+	pthread_join(*dma, NULL);
 
 	/* Stop timer */
 	stop_timer();
