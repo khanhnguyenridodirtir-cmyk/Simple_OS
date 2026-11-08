@@ -35,12 +35,12 @@
 #include "Vdma_top.h"
 #include "Vdma_top__Dpi.h"  
 
-#if DMA_MAIN == 1
+/* Can khong dieu kien: nhanh else ben duoi phai doc
+ * caller->krnl->mram->storage, tuc RAM that cua OS. */
 extern "C" {
 #include "common.h"
 #include "os-mm.h"
 }
-#endif
 
 // RTL Direct Test - Drive Verilator RTL directly
 extern "C" int dpi_rtl_dma_copy(uint64_t src_offset, uint64_t dst_offset, uint64_t length);
@@ -58,16 +58,27 @@ int dpi_dma_copy(struct pcb_t *caller, uint64_t src_offset, uint64_t dst_offset,
     //struct krnl_t *krnl = caller->krnl;
 
     if (memory_bank_is_available()) {
-        printf("dma_testbench modeo with dpi_dma_copy from memory bank\n");
         src = memory_bank_get_ptr(src_offset);
         dst = memory_bank_get_ptr(dst_offset);
-    } else {
-        /*
-         * TODO: map system OS memory address
-         */
-        //printf("dma_testbench modeo with OS memory address\n");
-        //src =  krnl->...
-        //dst =  krnl->...
+    } else if (caller && caller->krnl && caller->krnl->mram
+                      && caller->krnl->mram->storage) {
+        /* Chay duoi ./os: chua ai goi memory_bank_init() nen bank rong.
+         * Dang ky thang RAM that cua OS lam bank - tu day moi offset
+         * RTL nhin thay la offset trong os.mram->storage. */
+        struct krnl_t *krnl = caller->krnl;
+        memory_bank_attach(krnl->mram->storage, (size_t) krnl->mram->maxsz);
+        src = memory_bank_get_ptr(src_offset);
+        dst = memory_bank_get_ptr(dst_offset);
+    }
+
+    if (!src || !dst) {
+        /* memory_bank_get_ptr() tra NULL khi offset >= kich thuoc bank.
+         * Ban goc khong kiem tra nen ghi thang vao dia chi 0 -> segfault. */
+        printf("dpi_dma_copy: offset ngoai mien (src=%llu dst=%llu bank=%zu)\n",
+               (unsigned long long) src_offset,
+               (unsigned long long) dst_offset,
+               memory_bank_get_size());
+        return -1;
     }
 
     printf("dpi_dma_copy: src=%llu, dst=%llu, len=%llu\n", 
@@ -75,13 +86,18 @@ int dpi_dma_copy(struct pcb_t *caller, uint64_t src_offset, uint64_t dst_offset,
 		    (unsigned long long) dst_offset,
 		    (unsigned long long) length);
 
+#if DMA_MAIN == 1
+    /* Chi sinh du lieu mau khi chay ./dma_testbench doc lap.
+     * Duoi ./os thi vung nguon la du lieu THAT cua process - ghi de
+     * len no la pha hong bo nho cua chuong trinh dang chay. */
     uint8_t* psrc = (uint8_t*)src;
     uint64_t pattern_length = (length <= 255) ? length : 255;
-    
+
     for (uint64_t i = 0; i < length; i++) {
         // Pattern cycles through 0x01 to min(length, 255)
         psrc[i] = (uint8_t)((i % pattern_length) + 1);
     }
+#endif
 
     printf("Before copy:\n");
     printf("  src[0] = 0x%02x, src[1] = 0x%02x\n"
@@ -140,19 +156,47 @@ extern "C" int do_dma(struct pcb_t *caller,uint64_t source, uint64_t destination
     /* Perform DMA copy using DPI with provided caller and parameters */
     test_errors += dpi_dma_copy(caller, source, destination, length);
 
-    /*
-     * TODO: This asynchronous implementation of DMA
-     *        DMA completion callback is not yet implemented in this testbench
-     */
-    // Install callback handler
-    //dma_done_callback();  // Call the callback to signal DMA completion
+    /* dma_done_callback() KHONG can goi tu day: chinh mach goi no qua
+     * DPI tai suon len cua ch_done. Dem lai bang dma_done_count(). */
 
     return test_errors;
 }
 
+/*
+ * do_dma_start - khoi dong DMA roi TRA VE NGAY (duong bat dong bo)
+ * Dung cho luong: CPU nap lenh -> di lam viec khac -> thinh thoang hoi.
+ */
+extern "C" int do_dma_start(struct pcb_t *caller, uint64_t source,
+                            uint64_t destination, uint64_t length) {
+    void *src = NULL, *dst = NULL;
+
+    if (!memory_bank_is_available()
+        && caller && caller->krnl && caller->krnl->mram
+        && caller->krnl->mram->storage) {
+        memory_bank_attach(caller->krnl->mram->storage,
+                           (size_t) caller->krnl->mram->maxsz);
+    }
+    src = memory_bank_get_ptr(source);
+    dst = memory_bank_get_ptr(destination);
+    if (!src || !dst) {
+        printf("do_dma_start: offset ngoai mien\n");
+        return -1;
+    }
+
+    return dpi_rtl_dma_start(source, destination, length);
+}
+
+/*
+ * do_dma_poll - cap nclk chu ky clock cho job dang chay
+ * tra 1 = xong, 0 = con chay
+ */
+extern "C" int do_dma_poll(int nclk) {
+    return dpi_rtl_dma_tick(nclk);
+}
+
 #if DMA_MAIN == 1
 /* main function for independent standalone dma_testbench build
- * [Usage]: ./dma_testbench [source_offset] [destination_offset] [length]
+ * [Usage]: ./dma_testbench [src_offset] [dst_offset] [length] [async]
  * source: source memory offset
  * destination: destination memory offset
  * length: number of bytes to copy
@@ -202,7 +246,41 @@ int main(int argc, char** argv) {
     caller->mm = caller->krnl->mm;
     caller->pid = 0;  // Set a default PID
 
-    int result = do_dma(caller, source, destination, length);
+    int result;
+
+    if (argc >= 5 && strcmp(argv[4], "async") == 0) {
+        /* --- Che do bat dong bo: mo phong vong lap cua co_processor ---
+         * Moi "time slot" chi cap DMA_CLK_PER_SLOT chu ky clock roi
+         * nha CPU ra. In ra de thay job KEO DAI qua nhieu slot, tuc
+         * CPU khong he bi giam trong luc DMA chay. */
+        printf("\n=== Che do BAT DONG BO (%d chu ky/slot) ===\n",
+               DMA_CLK_PER_SLOT);
+
+        if (do_dma_start(caller, source, destination, length) != 0) {
+            printf("Khong khoi dong duoc DMA\n");
+            return 1;
+        }
+        printf("slot  0: da nap lenh, CPU duoc tra ve ngay "
+               "(trang thai = RUNNING)\n");
+
+        int slot = 0;
+        while (do_dma_poll(DMA_CLK_PER_SLOT) == 0) {
+            slot++;
+            printf("slot %2d: DMA con chay (%u byte), CPU van lam viec khac\n",
+                   slot, dpi_rtl_dma_bytes());
+        }
+        slot++;
+        printf("slot %2d: DMA xong - %u byte sau %llu chu ky, "
+               "dma_done_callback() duoc goi %lu lan\n",
+               slot, dpi_rtl_dma_bytes(),
+               (unsigned long long) dpi_rtl_dma_cycles(),
+               dma_done_count());
+
+        result = dpi_rtl_dma_reap();
+        printf("da nha kenh (ch_enable = 0), trang thai ve IDLE\n\n");
+    } else {
+        result = do_dma(caller, source, destination, length);
+    }
 
     // Cleanup
     free(caller->krnl->active_mswp);

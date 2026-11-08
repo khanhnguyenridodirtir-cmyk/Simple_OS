@@ -71,81 +71,160 @@ extern "C" void rtl_dma_cleanup_simulation(void) {
     printf("Clean up dma_rtl simulation\n");
 }
 
+/* ===================================================================
+ * Trang thai job DMA - chi mot kenh nen mot bo bien toan cuc la du.
+ * RTL set last_desc = 1 cung (DepSet_hbdce0907:180) => khong co hang
+ * doi phan cung, moi luc chi chay duoc mot descriptor.
+ * =================================================================== */
+static dma_job_state_t g_state  = DMA_JOB_IDLE;
+static uint64_t        g_cycles = 0;   /* so chu ky job hien tai da chay */
+
+/* Dap tron mot chu ky clock: xuong 0 roi len 1.
+ * Mach chi nhuc nhich khi co eval(), khong tu chay nhu FPGA that. */
+static inline void tick_one_cycle(void) {
+    top->clk = 0;
+    top->eval();
+    top->clk = 1;
+    top->eval();
+    if (is_tracing) {
+        tracer->dump(sim_time);
+        sim_time += 10;
+    }
+    g_cycles++;
+}
+
 /**
- * rtl_dma_copy - Execute DMA copy using Verilator RTL
- * source: source memory offset
- * destination: destination memory offset
- * length: number of bytes to copy
+ * dpi_rtl_dma_start - nap descriptor va bat kenh, TRA VE NGAY
+ *
+ * Dieu kien khoi dong lay nguyen tu RTL (DepSet_hbdce0907:369-372):
+ *     start_cond = (current_state == IDLE)
+ *                & ch_enable & ~ch_pause & desc_valid
+ * Bon dieu kien phai dung dong thoi, thieu mot cai thi mach im lang.
  */
-extern "C" int dpi_rtl_dma_copy(uint64_t source, uint64_t destination, uint64_t length) {
+extern "C" int dpi_rtl_dma_start(uint64_t source, uint64_t destination,
+                                 uint64_t length) {
     if (!top) {
-        printf("Cannot perform DMA copy: RTL simulation not initialized\n");
+        printf("Cannot start DMA: RTL simulation not initialized\n");
         return -1;
     }
-    
-    //printf("RTL DMA Copy: src=%llu, dst=%llu, len=%llu\n",
-    //       (unsigned long long) source,
-    //       (unsigned long long) destination,
-    //       (unsigned long long) length);
-    
-    // Reset
-    top->clk = 0;
-    top->rst_n = 0;
-    top->eval();
-    top->clk ^= 1;
-    top->eval();
-    
-    top->rst_n = 1;
-    top->clk ^= 1;
-    top->eval();
-    top->clk ^= 1;
-    top->eval();
-    
-    // Set descriptor
-    top->desc_valid = 1;
-    top->desc_data_0 = source;
-    top->desc_data_1 = destination;
-    top->desc_data_2 = length;
-    top->desc_data_3 = 0;
-    
-    top->ch_enable = 1;
-    top->ch_pause = 0;
-    
-    // Run simulation
-    int cycle = 0;
-    int max_cycles = 100000;
-    
-    while (cycle < max_cycles && !top->ch_done) {
-        top->clk ^= 1;
-        top->eval();
-        
-    //    if (cycle % 10 == 0) {
-    //        printf("  Cycle %d: clk=%d, state=%d, ch_done=%d\n",
-    //               cycle, (int)top->clk, (int)top->state, (int)top->ch_done);
-    //    }
-        
-        if (is_tracing) {
-            tracer->dump(sim_time);
-            sim_time += 10;
-        }
-        
-        cycle++;
+    if (g_state == DMA_JOB_RUNNING) {
+        /* Mot kenh, mot job. Nguoi goi phai doi hoac xep hang. */
+        return -1;
     }
 
-    // ch_done is high now. Keep clocking (2 full cycles) with ch_enable still asserted
-    // dma_done_callback() on the next rising edge.
-    top->clk ^= 1;
-    top->eval();
-    top->clk ^= 1;
-    top->eval();
-   
-    top->desc_valid = 0;
-    top->ch_enable = 0;
-    top->ch_pause = 0;
-    
-    //printf("RTL DMA Copy: Completed in %d cycles, ch_done=%d\n", cycle, (int)top->ch_done);
+    /* Reset ve IDLE cho chac truoc moi job */
+    top->clk = 0;  top->rst_n = 0;  top->eval();
+    top->clk = 1;                   top->eval();
+    top->rst_n = 1;
+    top->clk = 0;                   top->eval();
+    top->clk = 1;                   top->eval();
 
-    return top->ch_done ? 0 : -1;
+    /* Descriptor: chi 3 word co nghia.
+     * desc_data_3 khong duoc RTL doc o bat ky dau - da grep ca
+     * src/Vdma_top*.cpp, no chi bi gan 0 trong ham init. */
+    top->desc_data_0 = source;        /* offset nguon, KHONG phai con tro */
+    top->desc_data_1 = destination;   /* offset dich */
+    top->desc_data_2 = length;        /* so byte; RTL cat con 32 bit */
+    top->desc_data_3 = 0;
+
+    top->desc_valid = 1;
+    top->ch_enable  = 1;
+    top->ch_pause   = 0;
+
+    g_state  = DMA_JOB_RUNNING;
+    g_cycles = 0;
+
+    /* Mot chu ky de mach chuyen IDLE -> LOAD, roi tra ve ngay.
+     * Tu day CPU ranh di lam viec khac. */
+    tick_one_cycle();
+    return 0;
+}
+
+/**
+ * dpi_rtl_dma_tick - cap nclk chu ky clock cho job dang chay
+ * tra 1 neu job da ket thuc, 0 neu con chay
+ */
+extern "C" int dpi_rtl_dma_tick(int nclk) {
+    if (!top || g_state != DMA_JOB_RUNNING) {
+        return (g_state == DMA_JOB_DONE || g_state == DMA_JOB_ERROR);
+    }
+
+    for (int i = 0; i < nclk; i++) {
+        if (top->ch_done) break;
+        if (g_cycles >= DMA_MAX_CYCLES) {
+            printf("DMA timeout sau %llu chu ky\n",
+                   (unsigned long long) g_cycles);
+            g_state = DMA_JOB_ERROR;
+            return 1;
+        }
+        tick_one_cycle();
+    }
+
+    if (top->ch_done) {
+        /* Dap them 2 nua chu ky voi ch_enable VAN giu, de mach kip goi
+         * dma_done_callback() tai suon len cua ch_done. */
+        top->clk ^= 1; top->eval();
+        top->clk ^= 1; top->eval();
+        g_state = top->ch_error ? DMA_JOB_ERROR : DMA_JOB_DONE;
+        return 1;
+    }
+    return 0;   /* con chay, slot sau tick tiep */
+}
+
+extern "C" dma_job_state_t dpi_rtl_dma_state(void) { return g_state; }
+
+extern "C" uint32_t dpi_rtl_dma_bytes(void) {
+    return top ? (uint32_t) top->ch_bytes_transferred : 0u;
+}
+
+extern "C" uint64_t dpi_rtl_dma_cycles(void) { return g_cycles; }
+
+/**
+ * dpi_rtl_dma_reap - nha kenh, tra channel ve IDLE
+ *
+ * BAT BUOC. May trang thai: 0 IDLE -> 1 -> 2 COPY -> 3 -> 4 DONE,
+ * va state 4 CHI ve 0 khi ch_enable = 0 (DepSet_hbdce0907:34-36).
+ * Ha ch_enable chua du - con phai dap clock thi mach moi chuyen,
+ * vi current_state <= next_state nam trong khoi tuan tu theo clk.
+ */
+extern "C" int dpi_rtl_dma_reap(void) {
+    if (!top) return -1;
+
+    top->desc_valid = 0;
+    top->ch_enable  = 0;
+    top->ch_pause   = 0;
+
+    /* Hai chu ky de FSM thuc su di tu DONE ve IDLE */
+    tick_one_cycle();
+    tick_one_cycle();
+
+    int rc = (g_state == DMA_JOB_DONE) ? 0 : -1;
+    g_state = DMA_JOB_IDLE;
+    return rc;
+}
+
+/**
+ * dpi_rtl_dma_pause - dong bang / chay tiep giua chung
+ * RTL dong 358: current_state <= next_state CHI khi ch_pause == 0,
+ * nen ch_pause = 1 dong bang ca may trang thai, ha xuong thi chay
+ * tiep dung cho dang do.
+ */
+extern "C" void dpi_rtl_dma_pause(int on) {
+    if (top) top->ch_pause = on ? 1 : 0;
+}
+
+/**
+ * dpi_rtl_dma_copy - ban CHAN cu, giu lai cho ./dma_testbench
+ *
+ * Gio no chi la mot vong lap mong tren ba ham bat dong bo o tren.
+ * Giu lai de khong pha API cu va de chung minh hai duong cho ra
+ * cung mot ket qua.
+ */
+extern "C" int dpi_rtl_dma_copy(uint64_t source, uint64_t destination,
+                                uint64_t length) {
+    if (dpi_rtl_dma_start(source, destination, length) != 0) return -1;
+    while (!dpi_rtl_dma_tick(DMA_CLK_PER_SLOT)) { /* cho */ }
+    return dpi_rtl_dma_reap();
 }
 
 

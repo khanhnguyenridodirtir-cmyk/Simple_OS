@@ -31,6 +31,24 @@ typedef int memory_bank_t;
 // Initialize a memory bank with given size in bytes
 memory_bank_t memory_bank_init(size_t size_bytes);
 
+/* memory_bank_attach - dang ky mot vung nho CO SAN lam bank
+ *
+ * Khac memory_bank_init o hai diem:
+ *   - KHONG malloc, dung thang vung storage nguoi goi dua vao
+ *   - KHONG free khi cleanup (co owns_data = 0)
+ *
+ * Dung de tro bus cua DMA vao RAM that cua OS (os.mram->storage)
+ * thay vi mot mang malloc rieng. Sau khi goi ham nay, hai ham DPI
+ * dpi_bank_read32_legacy / write32_legacy chay dung ma RTL khong
+ * phai sua mot dong nao.
+ */
+memory_bank_t memory_bank_attach(void *storage, size_t size_bytes);
+
+/* So lan RTL goi dma_done_callback() ke tu lan reset dem gan nhat.
+ * Day la duong bao hoan thanh di tu phan cung len phan mem. */
+unsigned long dma_done_count(void);
+void          dma_done_reset(void);
+
 // Cleanup all memory banks
 void memory_bank_cleanup(void);
 
