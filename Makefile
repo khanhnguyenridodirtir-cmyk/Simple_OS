@@ -11,12 +11,15 @@ LIB = -lpthread
 SRC = src
 OBJ = obj
 INCLUDE = include
+TEST = test    # Thêm biến chỉ thư mục test
 
 CC = gcc
 CXX = g++
 DEBUG = -g
 CFLAGS = -Wall -c $(DEBUG)
 LFLAGS = -Wall $(DEBUG)
+
+vpath %.c $(SRC) $(TEST)    # Bổ sung $(TEST) vào vpath để Make tự tìm file .c trong thư mục test/
 
 vpath %.c $(SRC)
 vpath %.cpp $(SRC)
@@ -80,7 +83,10 @@ HEADER = $(wildcard $(INCLUDE)/*.h)
   
 all: os
 #mem sched os
-
+# Target dùng để test riêng phân hệ Bộ nhớ vật lý (test/test_mm_memphy.c)
+test_mem: $(OBJ) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o
+	$(CXX) $(LFLAGS) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o -o test_mem $(LIB)
+	
 # Just compile memory management modules
 mem: $(MEM_OBJ)
 	$(MAKE) $(LFLAGS) $(MEM_OBJ) -o mem $(LIB)

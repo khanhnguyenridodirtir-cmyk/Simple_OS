@@ -136,6 +136,7 @@ int MEMPHY_format(struct memphy_struct *mp, int pagesz)
    /* Init head of free framephy list */
    fst = malloc(sizeof(struct framephy_struct));
    fst->fpn = iter;
+   fst->fp_next = NULL;
    mp->free_fp_list = fst;
 
    /* We have list with first element, fill in the rest num-1 element member*/
@@ -168,6 +169,10 @@ int MEMPHY_get_freefp(struct memphy_struct *mp, addr_t *retfpn)
     * TODO MEMPHY is iteratively used up until its exhausted
     * No garbage collector acting then it not been released
     */
+   *retfpn = fp->fpn;
+   mp->free_fp_list = fp->fp_next;
+   
+
    free(fp);
 
    return 0;
@@ -175,11 +180,18 @@ int MEMPHY_get_freefp(struct memphy_struct *mp, addr_t *retfpn)
 
 int MEMPHY_dump(struct memphy_struct *mp)
 {
-  /*
-   * TODO dump memphy contnt mp->storage
-   *     for tracing the memory content
-   */
+  if (mp == NULL || mp->storage == NULL)
+      return -1;
 
+   printf("--- MEMPHY DUMP ---\n");
+   for (int i = 0; i < mp->maxsz; i++)
+   {
+      if (mp->storage[i] != 0) 
+      {
+         printf("Addr 0x%08x: 0x%02x\n", i, mp->storage[i]);
+      }
+   }
+   
    return 0;
 }
 
