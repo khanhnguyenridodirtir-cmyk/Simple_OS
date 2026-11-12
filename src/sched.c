@@ -14,6 +14,8 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+//#define SCHED_DBG 1
+
 static struct queue_t ready_queue;
 static struct queue_t run_queue;
 static pthread_mutex_t queue_lock;
@@ -29,7 +31,7 @@ int queue_empty(void) {
 	unsigned long prio;
 	for (prio = 0; prio < MAX_PRIO; prio++)
 		if(!empty(&mlq_ready_queue[prio])) 
-			return -1;
+			return 0;
 #endif
 	return (empty(&ready_queue) && empty(&run_queue));
 }
@@ -58,14 +60,48 @@ void init_scheduler(void) {
  */
 struct pcb_t * get_mlq_proc(void) {
 	struct pcb_t * proc = NULL;
+	int i;
+	int q = -1;	
 
 	pthread_mutex_lock(&queue_lock);
 	/*TODO: get a process from PRIORITY [ready_queue].
 	 *      It worth to protect by a mechanism.
 	 * */
+	for (i = 0; i < MAX_PRIO; i++) {
+		if (!empty(&mlq_ready_queue[i]) && slot[i] > 0) {
+			q = i;
+			break;
+		}
+	}
+
+	if (q == -1) {
+		for (i = 0; i < MAX_PRIO; i++) {
+			if (!empty(&mlq_ready_queue[i])) {
+				q = i;
+				break;
+			}
+		}
+		if (q != -1) {
+			for (i = 0; i < MAX_PRIO; i++)
+				slot[i] = MAX_PRIO - i;
+#ifdef SCHED_DBG
+			printf("\t[MLQ] Het vong, nap lai slot cho tat ca queue\n");
+#endif
+		}
+	}
+
+	if (q != -1) {
+		proc = dequeue(&mlq_ready_queue[q]);
+		slot[q]--;
+#ifdef SCHED_DBG
+		printf("\t[MLQ] Lay PID %d tu queue %d, slot con lai %d\n",
+			proc->pid, q, slot[q]);
+#endif
+	}
 
 	if (proc != NULL)
 		enqueue(&running_list, proc);
+	pthread_mutex_unlock(&queue_lock);	
 	return proc;	
 }
 
@@ -78,6 +114,8 @@ void put_mlq_proc(struct pcb_t * proc) {
 	 *       It worth to protect by a mechanism.
 	 * 
 	 */
+	if (proc->prio >= MAX_PRIO)
+		proc->prio = MAX_PRIO - 1;
 
 	pthread_mutex_lock(&queue_lock);
 	enqueue(&mlq_ready_queue[proc->prio], proc);
@@ -93,6 +131,8 @@ void add_mlq_proc(struct pcb_t * proc) {
 	 *       It worth to protect by a mechanism.
 	 * 
 	 */
+		if (proc->prio >= MAX_PRIO)
+		proc->prio = MAX_PRIO - 1;
        
 	pthread_mutex_lock(&queue_lock);
 	enqueue(&mlq_ready_queue[proc->prio], proc);

@@ -1,0 +1,620 @@
+Time slot   0
+ld_routine
+	Loaded a process at input/proc/h03_a, PID: 1 PRIO: 0
+Time slot   1
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 139
+	CPU 0: Dispatched process  1
+	Loaded a process at input/proc/h03_b, PID: 2 PRIO: 1
+Time slot   2
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 138
+	CPU 0: Dispatched process  1
+Time slot   3
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 137
+	CPU 0: Dispatched process  1
+Time slot   4
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 136
+	CPU 0: Dispatched process  1
+Time slot   5
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 135
+	CPU 0: Dispatched process  1
+Time slot   6
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 134
+	CPU 0: Dispatched process  1
+Initialized dma_rtl simulation
+Time slot   7
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 133
+	CPU 0: Dispatched process  1
+Time slot   8
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 132
+	CPU 0: Dispatched process  1
+Time slot   9
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 131
+	CPU 0: Dispatched process  1
+Time slot  10
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 130
+	CPU 0: Dispatched process  1
+Time slot  11
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 129
+	CPU 0: Dispatched process  1
+Time slot  12
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 128
+	CPU 0: Dispatched process  1
+Time slot  13
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 127
+	CPU 0: Dispatched process  1
+Time slot  14
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 126
+	CPU 0: Dispatched process  1
+Time slot  15
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 125
+	CPU 0: Dispatched process  1
+Time slot  16
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 124
+	CPU 0: Dispatched process  1
+Time slot  17
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 123
+	CPU 0: Dispatched process  1
+Time slot  18
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 122
+	CPU 0: Dispatched process  1
+Time slot  19
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 121
+	CPU 0: Dispatched process  1
+Time slot  20
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 120
+	CPU 0: Dispatched process  1
+Time slot  21
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 119
+	CPU 0: Dispatched process  1
+Time slot  22
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 118
+	CPU 0: Dispatched process  1
+Time slot  23
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 117
+	CPU 0: Dispatched process  1
+Time slot  24
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 116
+	CPU 0: Dispatched process  1
+Time slot  25
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 115
+	CPU 0: Dispatched process  1
+Time slot  26
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 114
+	CPU 0: Dispatched process  1
+Time slot  27
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 113
+	CPU 0: Dispatched process  1
+Time slot  28
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 112
+	CPU 0: Dispatched process  1
+Time slot  29
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 111
+	CPU 0: Dispatched process  1
+Time slot  30
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 110
+	CPU 0: Dispatched process  1
+Time slot  31
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 109
+	CPU 0: Dispatched process  1
+Time slot  32
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 108
+	CPU 0: Dispatched process  1
+Time slot  33
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 107
+	CPU 0: Dispatched process  1
+Time slot  34
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 106
+	CPU 0: Dispatched process  1
+Time slot  35
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 105
+	CPU 0: Dispatched process  1
+Time slot  36
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 104
+	CPU 0: Dispatched process  1
+Time slot  37
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 103
+	CPU 0: Dispatched process  1
+Time slot  38
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 102
+	CPU 0: Dispatched process  1
+Time slot  39
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 101
+	CPU 0: Dispatched process  1
+Time slot  40
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 100
+	CPU 0: Dispatched process  1
+Time slot  41
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 99
+	CPU 0: Dispatched process  1
+Time slot  42
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 98
+	CPU 0: Dispatched process  1
+Time slot  43
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 97
+	CPU 0: Dispatched process  1
+Time slot  44
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 96
+	CPU 0: Dispatched process  1
+Time slot  45
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 95
+	CPU 0: Dispatched process  1
+Time slot  46
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 94
+	CPU 0: Dispatched process  1
+Time slot  47
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 93
+	CPU 0: Dispatched process  1
+Time slot  48
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 92
+	CPU 0: Dispatched process  1
+Time slot  49
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 91
+	CPU 0: Dispatched process  1
+Time slot  50
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 90
+	CPU 0: Dispatched process  1
+Time slot  51
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 89
+	CPU 0: Dispatched process  1
+Time slot  52
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 88
+	CPU 0: Dispatched process  1
+Time slot  53
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 87
+	CPU 0: Dispatched process  1
+Time slot  54
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 86
+	CPU 0: Dispatched process  1
+Time slot  55
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 85
+	CPU 0: Dispatched process  1
+Time slot  56
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 84
+	CPU 0: Dispatched process  1
+Time slot  57
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 83
+	CPU 0: Dispatched process  1
+Time slot  58
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 82
+	CPU 0: Dispatched process  1
+Time slot  59
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 81
+	CPU 0: Dispatched process  1
+Time slot  60
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 80
+	CPU 0: Dispatched process  1
+Time slot  61
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 79
+	CPU 0: Dispatched process  1
+Time slot  62
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 78
+	CPU 0: Dispatched process  1
+Time slot  63
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 77
+	CPU 0: Dispatched process  1
+Time slot  64
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 76
+	CPU 0: Dispatched process  1
+Time slot  65
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 75
+	CPU 0: Dispatched process  1
+Time slot  66
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 74
+	CPU 0: Dispatched process  1
+Time slot  67
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 73
+	CPU 0: Dispatched process  1
+Time slot  68
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 72
+	CPU 0: Dispatched process  1
+Time slot  69
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 71
+	CPU 0: Dispatched process  1
+Time slot  70
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 70
+	CPU 0: Dispatched process  1
+Time slot  71
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 69
+	CPU 0: Dispatched process  1
+Time slot  72
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 68
+	CPU 0: Dispatched process  1
+Time slot  73
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 67
+	CPU 0: Dispatched process  1
+Time slot  74
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 66
+	CPU 0: Dispatched process  1
+Time slot  75
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 65
+	CPU 0: Dispatched process  1
+Time slot  76
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 64
+	CPU 0: Dispatched process  1
+Time slot  77
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 63
+	CPU 0: Dispatched process  1
+Time slot  78
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 62
+	CPU 0: Dispatched process  1
+Time slot  79
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 61
+	CPU 0: Dispatched process  1
+Time slot  80
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 60
+	CPU 0: Dispatched process  1
+Time slot  81
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 59
+	CPU 0: Dispatched process  1
+Time slot  82
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 58
+	CPU 0: Dispatched process  1
+Time slot  83
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 57
+	CPU 0: Dispatched process  1
+Time slot  84
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 56
+	CPU 0: Dispatched process  1
+Time slot  85
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 55
+	CPU 0: Dispatched process  1
+Time slot  86
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 54
+	CPU 0: Dispatched process  1
+Time slot  87
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 53
+	CPU 0: Dispatched process  1
+Time slot  88
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 52
+	CPU 0: Dispatched process  1
+Time slot  89
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 51
+	CPU 0: Dispatched process  1
+Time slot  90
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 50
+	CPU 0: Dispatched process  1
+Time slot  91
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 49
+	CPU 0: Dispatched process  1
+Time slot  92
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 48
+	CPU 0: Dispatched process  1
+Time slot  93
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 47
+	CPU 0: Dispatched process  1
+Time slot  94
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 46
+	CPU 0: Dispatched process  1
+Time slot  95
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 45
+	CPU 0: Dispatched process  1
+Time slot  96
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 44
+	CPU 0: Dispatched process  1
+Time slot  97
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 43
+	CPU 0: Dispatched process  1
+Time slot  98
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 42
+	CPU 0: Dispatched process  1
+Time slot  99
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 41
+	CPU 0: Dispatched process  1
+Time slot 100
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 40
+	CPU 0: Dispatched process  1
+Time slot 101
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 39
+	CPU 0: Dispatched process  1
+Time slot 102
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 38
+	CPU 0: Dispatched process  1
+Time slot 103
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 37
+	CPU 0: Dispatched process  1
+Time slot 104
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 36
+	CPU 0: Dispatched process  1
+Time slot 105
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 35
+	CPU 0: Dispatched process  1
+Time slot 106
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 34
+	CPU 0: Dispatched process  1
+Time slot 107
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 33
+	CPU 0: Dispatched process  1
+Time slot 108
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 32
+	CPU 0: Dispatched process  1
+Time slot 109
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 31
+	CPU 0: Dispatched process  1
+Time slot 110
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 30
+	CPU 0: Dispatched process  1
+Time slot 111
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 29
+	CPU 0: Dispatched process  1
+Time slot 112
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 28
+	CPU 0: Dispatched process  1
+Time slot 113
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 27
+	CPU 0: Dispatched process  1
+Time slot 114
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 26
+	CPU 0: Dispatched process  1
+Time slot 115
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 25
+	CPU 0: Dispatched process  1
+Time slot 116
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 24
+	CPU 0: Dispatched process  1
+Time slot 117
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 23
+	CPU 0: Dispatched process  1
+Time slot 118
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 22
+	CPU 0: Dispatched process  1
+Time slot 119
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 21
+	CPU 0: Dispatched process  1
+Time slot 120
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 20
+	CPU 0: Dispatched process  1
+Time slot 121
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 19
+	CPU 0: Dispatched process  1
+Time slot 122
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 18
+	CPU 0: Dispatched process  1
+Time slot 123
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 17
+	CPU 0: Dispatched process  1
+Time slot 124
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 16
+	CPU 0: Dispatched process  1
+Time slot 125
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 15
+	CPU 0: Dispatched process  1
+Time slot 126
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 14
+	CPU 0: Dispatched process  1
+Time slot 127
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 13
+	CPU 0: Dispatched process  1
+Time slot 128
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 12
+	CPU 0: Dispatched process  1
+Time slot 129
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 11
+	CPU 0: Dispatched process  1
+Time slot 130
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 10
+	CPU 0: Dispatched process  1
+Time slot 131
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 9
+	CPU 0: Dispatched process  1
+Time slot 132
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 8
+	CPU 0: Dispatched process  1
+Time slot 133
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 7
+	CPU 0: Dispatched process  1
+Time slot 134
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 6
+	CPU 0: Dispatched process  1
+Time slot 135
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 5
+	CPU 0: Dispatched process  1
+Time slot 136
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 4
+	CPU 0: Dispatched process  1
+Time slot 137
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 3
+	CPU 0: Dispatched process  1
+Time slot 138
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 2
+	CPU 0: Dispatched process  1
+Time slot 139
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 1
+	CPU 0: Dispatched process  1
+Time slot 140
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 0
+	CPU 0: Dispatched process  1
+Time slot 141
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 2 tu queue 1, slot con lai 138
+	CPU 0: Dispatched process  2
+Time slot 142
+	CPU 0: Put process  2 to run queue
+	[MLQ] Lay PID 2 tu queue 1, slot con lai 137
+	CPU 0: Dispatched process  2
+Time slot 143
+	CPU 0: Put process  2 to run queue
+	[MLQ] Lay PID 2 tu queue 1, slot con lai 136
+	CPU 0: Dispatched process  2
+Time slot 144
+	CPU 0: Processed  2 has finished
+	[MLQ] Het vong, nap lai slot cho tat ca queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 139
+	CPU 0: Dispatched process  1
+Time slot 145
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 138
+	CPU 0: Dispatched process  1
+Time slot 146
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 137
+	CPU 0: Dispatched process  1
+Time slot 147
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 136
+	CPU 0: Dispatched process  1
+Time slot 148
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 135
+	CPU 0: Dispatched process  1
+Time slot 149
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 134
+	CPU 0: Dispatched process  1
+Time slot 150
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 133
+	CPU 0: Dispatched process  1
+Time slot 151
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 132
+	CPU 0: Dispatched process  1
+Time slot 152
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 131
+	CPU 0: Dispatched process  1
+Time slot 153
+	CPU 0: Put process  1 to run queue
+	[MLQ] Lay PID 1 tu queue 0, slot con lai 130
+	CPU 0: Dispatched process  1
+Time slot 154
+	CPU 0: Processed  1 has finished
+	CPU 0 stopped
