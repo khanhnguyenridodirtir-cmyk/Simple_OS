@@ -10,7 +10,7 @@
  
  /* NOTICE this moudle is deprecated in Caitoa release
   *        the structure is maintained for future 64bit-32bit
-  *        backward compatible feature or PAE feature 
+  *        backward compatible feature or PAE feature  
   */
  
 #include "mm.h"

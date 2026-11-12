@@ -86,6 +86,21 @@ all: os
 # Target dùng để test riêng phân hệ Bộ nhớ vật lý (test/test_mm_memphy.c)
 test_mem: $(OBJ) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o
 	$(CXX) $(LFLAGS) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o -o test_mem $(LIB)
+
+test_memphy: test/test_memphy.c src/mm-memphy.c
+	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+
+test_mm64: test/test_mm64.c src/mm64.c src/mm-memphy.c
+	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+
+test_libmem: test/test_libmem.c test/test_mm_support.c src/libmem.c src/mm64.c src/mm-memphy.c
+	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+
+test_integration_mem: test/test_integration_mem.c test/test_mm_support.c src/libmem.c src/mm64.c src/mm-memphy.c
+	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+
+test: test_memphy test_mm64 test_libmem test_integration_mem
+	@status=0; for suite in test_memphy test_mm64 test_libmem test_integration_mem; do ./$$suite || status=1; done; exit $$status
 	
 # Just compile memory management modules
 mem: $(MEM_OBJ)
@@ -139,5 +154,7 @@ $(OBJ):
 
 clean:
 	rm -f $(SRC)/*.lst
-	rm -f $(OBJ)/*.o os sched mem pdg dma_testbench *.vcd
+	rm -f $(OBJ)/*.o os sched mem pdg dma_testbench test_memphy test_mm64 test_libmem test_integration_mem *.vcd
 	rm -rf $(OBJ)
+
+.PHONY: test
