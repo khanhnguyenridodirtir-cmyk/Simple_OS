@@ -26,6 +26,7 @@
 
 #include "sysbus.h"
 #include "dpi_rtl.h"
+#include "dma.h"
 
 static int time_slot;
 static int num_cpus;
