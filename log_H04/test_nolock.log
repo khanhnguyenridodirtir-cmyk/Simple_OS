@@ -1,0 +1,20 @@
+== lan 1
+[H04] test_sched_lock: 4 CPU + 1 loader, 40 proc/round, 300 round
+Segmentation fault (core dumped)
+exit=139
+== lan 2
+[H04] test_sched_lock: 4 CPU + 1 loader, 40 proc/round, 300 round
+Segmentation fault (core dumped)
+exit=139
+== lan 3
+[H04] test_sched_lock: 4 CPU + 1 loader, 40 proc/round, 300 round
+Segmentation fault (core dumped)
+exit=139
+== lan 4
+[H04] test_sched_lock: 4 CPU + 1 loader, 40 proc/round, 300 round
+Segmentation fault (core dumped)
+exit=139
+== lan 5
+[H04] test_sched_lock: 4 CPU + 1 loader, 40 proc/round, 300 round
+Segmentation fault (core dumped)
+exit=139

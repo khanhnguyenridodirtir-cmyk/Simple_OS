@@ -1,0 +1,27 @@
+[H04] test_sched_lock: 4 CPU + 1 loader, 40 proc/round, 10 round
+==================
+WARNING: ThreadSanitizer: data race (pid=13948)
+  Read of size 4 at 0x556448703b50 by thread T2:
+    #0 empty src/queue.c:18 (test_nolock_tsan+0x286d) (BuildId: fe48e8368628a70efa868ddd0a7b2a30840cfe4b)
+    #1 get_mlq_proc /tmp/sched_nolock.c:87 (test_nolock_tsan+0x22ed) (BuildId: fe48e8368628a70efa868ddd0a7b2a30840cfe4b)
+    #2 get_proc /tmp/sched_nolock.c:164 (test_nolock_tsan+0x276c) (BuildId: fe48e8368628a70efa868ddd0a7b2a30840cfe4b)
+    #3 cpu tests/test_sched_lock.c:56 (test_nolock_tsan+0x1585) (BuildId: fe48e8368628a70efa868ddd0a7b2a30840cfe4b)
+
+  Previous write of size 4 at 0x556448703b50 by thread T1:
+    #0 enqueue src/queue.c:31 (test_nolock_tsan+0x295e) (BuildId: fe48e8368628a70efa868ddd0a7b2a30840cfe4b)
+    #1 add_mlq_proc /tmp/sched_nolock.c:159 (test_nolock_tsan+0x2742) (BuildId: fe48e8368628a70efa868ddd0a7b2a30840cfe4b)
+    #2 add_proc /tmp/sched_nolock.c:172 (test_nolock_tsan+0x27d4) (BuildId: fe48e8368628a70efa868ddd0a7b2a30840cfe4b)
+    #3 loader tests/test_sched_lock.c:38 (test_nolock_tsan+0x14d3) (BuildId: fe48e8368628a70efa868ddd0a7b2a30840cfe4b)
+
+  Location is global 'mlq_ready_queue' of size 57120 at 0x5564487039c0 (test_nolock_tsan+0x5b50)
+
+  Thread T2 (tid=13951, running) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 main tests/test_sched_lock.c:128 (test_nolock_tsan+0x1d62) (BuildId: fe48e8368628a70efa868ddd0a7b2a30840cfe4b)
+
+  Thread T1 (tid=13950, running) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 main tests/test_sched_lock.c:126 (test_nolock_tsan+0x1d2f) (BuildId: fe48e8368628a70efa868ddd0a7b2a30840cfe4b)
+
+SUMMARY: ThreadSanitizer: data race src/queue.c:18 in empty
+==================

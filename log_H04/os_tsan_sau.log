@@ -1,0 +1,378 @@
+Time slot   0
+ld_routine
+	Loaded a process at input/proc/s0, PID: 1 PRIO: 0
+	CPU 3: Dispatched process  1
+Time slot   1
+	Loaded a process at input/proc/s1, PID: 2 PRIO: 1
+	CPU 3: Put process  1 to run queue
+	CPU 3: Dispatched process  1
+	CPU 2: Dispatched process  2
+Time slot   2
+	Loaded a process at input/proc/s2, PID: 3 PRIO: 0
+	CPU 3: Put process  1 to run queue
+	CPU 3: Dispatched process  3
+	CPU 1: Dispatched process  1
+Time slot   3
+	CPU 2: Put process  2 to run queue
+	CPU 2: Dispatched process  2
+	Loaded a process at input/proc/s3, PID: 4 PRIO: 2
+	CPU 3: Put process  3 to run queue
+	CPU 3: Dispatched process  3
+	CPU 2: Put process  2 to run queue
+	CPU 2: Dispatched process  2
+Time slot   4
+	CPU 1: Put process  1 to run queue
+	CPU 1: Dispatched process  1
+	CPU 0: Dispatched process  4
+	Loaded a process at input/proc/s4, PID: 5 PRIO: 1
+	CPU 3: Put process  3 to run queue
+	CPU 3: Dispatched process  3
+	CPU 2: Put process  2 to run queue
+	CPU 2: Dispatched process  5
+Time slot   5
+	CPU 1: Put process  1 to run queue
+	CPU 1: Dispatched process  1
+	CPU 0: Put process  4 to run queue
+	CPU 0: Dispatched process  2
+	Loaded a process at input/proc/p1s, PID: 6 PRIO: 3
+	CPU 3: Put process  3 to run queue
+	CPU 3: Dispatched process  3
+	CPU 2: Put process  5 to run queue
+	CPU 2: Dispatched process  5
+	CPU 1: Put process  1 to run queue
+Time slot   6
+	CPU 1: Dispatched process  1
+	CPU 0: Put process  2 to run queue
+	CPU 0: Dispatched process  2
+	Loaded a process at input/proc/p2s, PID: 7 PRIO: 0
+	CPU 3: Put process  3 to run queue
+	CPU 3: Dispatched process  7
+	CPU 2: Put process  5 to run queue
+	CPU 1: Put process  1 to run queue
+Time slot   7
+	CPU 0: Put process  2 to run queue
+	CPU 0: Dispatched process  5
+	CPU 1: Dispatched process  1
+	CPU 2: Dispatched process  3
+	Loaded a process at input/proc/p3s, PID: 8 PRIO: 2
+	CPU 3: Put process  7 to run queue
+	CPU 3: Dispatched process  7
+	CPU 2: Put process  3 to run queue
+	CPU 2: Dispatched process  3
+	CPU 1: Put process  1 to run queue
+	CPU 1: Dispatched process  1
+Time slot   8
+	CPU 0: Put process  5 to run queue
+	CPU 0: Dispatched process  2
+	Loaded a process at input/proc/s0, PID: 9 PRIO: 1
+	CPU 3: Put process  7 to run queue
+	CPU 3: Dispatched process  7
+	CPU 2: Put process  3 to run queue
+	CPU 2: Dispatched process  3
+	CPU 1: Put process  1 to run queue
+Time slot   9
+	CPU 1: Dispatched process  1
+	CPU 0: Put process  2 to run queue
+	CPU 0: Dispatched process  5
+	Loaded a process at input/proc/s1, PID: 10 PRIO: 3
+	CPU 3: Put process  7 to run queue
+	CPU 3: Dispatched process  7
+	CPU 2: Put process  3 to run queue
+	CPU 2: Dispatched process  3
+	CPU 1: Put process  1 to run queue
+Time slot  10
+	CPU 1: Dispatched process  1
+	CPU 0: Put process  5 to run queue
+	CPU 0: Dispatched process  9
+	Loaded a process at input/proc/s2, PID: 11 PRIO: 2
+	CPU 3: Put process  7 to run queue
+	CPU 3: Dispatched process  7
+	CPU 2: Put process  3 to run queue
+	CPU 2: Dispatched process  3
+Time slot  11
+	CPU 1: Put process  1 to run queue
+	CPU 1: Dispatched process  1
+	CPU 0: Put process  9 to run queue
+	CPU 0: Dispatched process  2
+	Loaded a process at input/proc/s3, PID: 12 PRIO: 0
+	CPU 3: Put process  7 to run queue
+	CPU 3: Dispatched process 12
+	CPU 1: Put process  1 to run queue
+Time slot  12
+	CPU 1: Dispatched process  7
+	CPU 0: Processed  2 has finished
+	CPU 2: Put process  3 to run queue
+	CPU 0: Dispatched process  1
+	CPU 2: Dispatched process  3
+	CPU 3: Put process 12 to run queue
+	CPU 3: Dispatched process 12
+	CPU 2: Put process  3 to run queue
+	CPU 2: Dispatched process  3
+	CPU 1: Put process  7 to run queue
+Time slot  13
+	CPU 1: Dispatched process  7
+	CPU 0: Put process  1 to run queue
+	CPU 0: Dispatched process  1
+	CPU 3: Put process 12 to run queue
+	CPU 3: Dispatched process 12
+	CPU 2: Put process  3 to run queue
+	CPU 2: Dispatched process  3
+	CPU 1: Put process  7 to run queue
+	CPU 1: Dispatched process  7
+Time slot  14
+	CPU 0: Put process  1 to run queue
+	CPU 0: Dispatched process  1
+	CPU 3: Put process 12 to run queue
+	CPU 3: Dispatched process 12
+	CPU 2: Processed  3 has finished
+	CPU 2: Dispatched process  5
+	CPU 1: Put process  7 to run queue
+	CPU 1: Dispatched process  7
+Time slot  15
+	CPU 0: Put process  1 to run queue
+	CPU 0: Dispatched process  1
+	CPU 3: Put process 12 to run queue
+	CPU 3: Dispatched process 12
+	CPU 2: Put process  5 to run queue
+	CPU 2: Dispatched process  9
+Time slot  16
+	CPU 1: Put process  7 to run queue
+	CPU 1: Dispatched process  7
+	CPU 0: Processed  1 has finished
+	CPU 0: Dispatched process  5
+	CPU 3: Put process 12 to run queue
+	CPU 3: Dispatched process 12
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+Time slot  17
+	CPU 1: Put process  7 to run queue
+	CPU 1: Dispatched process  7
+	CPU 0: Put process  5 to run queue
+	CPU 0: Dispatched process  5
+	CPU 3: Put process 12 to run queue
+	CPU 3: Dispatched process 12
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+Time slot  18
+	CPU 1: Put process  7 to run queue
+	CPU 1: Dispatched process  7
+	CPU 0: Processed  5 has finished
+	CPU 0: Dispatched process  4
+	CPU 3: Put process 12 to run queue
+	CPU 3: Dispatched process 12
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+	CPU 1: Processed  7 has finished
+	CPU 1: Dispatched process  8
+Time slot  19
+	CPU 0: Put process  4 to run queue
+	CPU 0: Dispatched process 11
+	CPU 3: Put process 12 to run queue
+	CPU 3: Dispatched process 12
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+Time slot  20
+	CPU 1: Put process  8 to run queue
+	CPU 1: Dispatched process  4
+	CPU 0: Put process 11 to run queue
+	CPU 0: Dispatched process  8
+	CPU 3: Put process 12 to run queue
+	CPU 3: Dispatched process 12
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+	CPU 1: Put process  4 to run queue
+Time slot  21
+	CPU 1: Dispatched process 11
+	CPU 0: Put process  8 to run queue
+	CPU 0: Dispatched process  4
+	CPU 3: Put process 12 to run queue
+	CPU 3: Dispatched process 12
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+Time slot  22
+	CPU 1: Put process 11 to run queue
+	CPU 1: Dispatched process  8
+	CPU 0: Put process  4 to run queue
+	CPU 0: Dispatched process 11
+	CPU 3: Processed 12 has finished
+	CPU 3: Dispatched process  4
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+Time slot  23
+	CPU 1: Put process  8 to run queue
+	CPU 1: Dispatched process  8
+	CPU 0: Put process 11 to run queue
+	CPU 0: Dispatched process 11
+	CPU 3: Put process  4 to run queue
+	CPU 3: Dispatched process  4
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+	CPU 1: Put process  8 to run queue
+	CPU 1: Dispatched process  8
+Time slot  24
+	CPU 0: Put process 11 to run queue
+	CPU 0: Dispatched process 11
+	CPU 3: Put process  4 to run queue
+	CPU 3: Dispatched process  4
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+	CPU 1: Put process  8 to run queue
+	CPU 1: Dispatched process  8
+Time slot  25
+	CPU 0: Put process 11 to run queue
+	CPU 0: Dispatched process 11
+	CPU 3: Put process  4 to run queue
+	CPU 3: Dispatched process  4
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+Time slot  26
+	CPU 1: Put process  8 to run queue
+	CPU 1: Dispatched process  8
+	CPU 0: Put process 11 to run queue
+	CPU 0: Dispatched process 11
+	CPU 3: Put process  4 to run queue
+	CPU 3: Dispatched process  4
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+Time slot  27
+	CPU 1: Put process  8 to run queue
+	CPU 1: Dispatched process  8
+	CPU 0: Put process 11 to run queue
+	CPU 0: Dispatched process 11
+	CPU 3: Put process  4 to run queue
+	CPU 3: Dispatched process  4
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+Time slot  28
+	CPU 1: Put process  8 to run queue
+	CPU 1: Dispatched process  8
+	CPU 0: Put process 11 to run queue
+	CPU 0: Dispatched process 11
+	CPU 3: Put process  4 to run queue
+	CPU 3: Dispatched process  4
+	CPU 2: Put process  9 to run queue
+	CPU 2: Dispatched process  9
+	CPU 1: Put process  8 to run queue
+	CPU 1: Dispatched process  8
+Time slot  29
+	CPU 0: Put process 11 to run queue
+	CPU 0: Dispatched process 11
+	CPU 3: Processed  4 has finished
+	CPU ==================
+WARNING: ThreadSanitizer: data race (pid=16327)
+  Write of size 8 at 0x557f6a4e6b28 by thread T9:
+    #0 Verilated::lastContextp(VerilatedContext*) /usr/share/verilator/include/verilated.h:738 (os+0xf924) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #1 Verilated::threadContextp(VerilatedContext*) /usr/share/verilator/include/verilated.h:752 (os+0x30325) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #2 VlWorkerThread::startWorker(VlWorkerThread*, VerilatedContext*) /usr/share/verilator/include/verilated_threads.cpp:95 (os+0x8122a) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #3 void std::__invoke_impl<void, void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*>(std::__invoke_other, void (*&&)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*&&, VerilatedContext*&&) /usr/include/c++/13/bits/invoke.h:61 (os+0x84dad) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #4 std::__invoke_result<void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*>::type std::__invoke<void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*>(void (*&&)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*&&, VerilatedContext*&&) /usr/include/c++/13/bits/invoke.h:96 (os+0x84c30) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #5 void std::thread::_Invoker<std::tuple<void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*> >::_M_invoke<0ul, 1ul, 2ul>(std::_Index_tuple<0ul, 1ul, 2ul>) /usr/include/c++/13/bits/std_thread.h:292 (os+0x84ace) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #6 std::thread::_Invoker<std::tuple<void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*> >::operator()() /usr/include/c++/13/bits/std_thread.h:299 (os+0x84a3a) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #7 std::thread::_State_impl<std::thread::_Invoker<std::tuple<void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*> > >::_M_run() /usr/include/c++/13/bits/std_thread.h:244 (os+0x849ec) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #8 <null> <null> (libstdc++.so.6+0xecdb3) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+
+  Previous write of size 8 at 0x557f6a4e6b28 by thread T8:
+    #0 Verilated::lastContextp(VerilatedContext*) /usr/share/verilator/include/verilated.h:738 (os+0xf924) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #1 Verilated::threadContextp(VerilatedContext*) /usr/share/verilator/include/verilated.h:752 (os+0x30325) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #2 VlWorkerThread::startWorker(VlWorkerThread*, VerilatedContext*) /usr/share/verilator/include/verilated_threads.cpp:95 (os+0x8122a) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #3 void std::__invoke_impl<void, void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*>(std::__invoke_other, void (*&&)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*&&, VerilatedContext*&&) /usr/include/c++/13/bits/invoke.h:61 (os+0x84dad) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #4 std::__invoke_result<void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*>::type std::__invoke<void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*>(void (*&&)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*&&, VerilatedContext*&&) /usr/include/c++/13/bits/invoke.h:96 (os+0x84c30) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #5 void std::thread::_Invoker<std::tuple<void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*> >::_M_invoke<0ul, 1ul, 2ul>(std::_Index_tuple<0ul, 1ul, 2ul>) /usr/include/c++/13/bits/std_thread.h:292 (os+0x84ace) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #6 std::thread::_Invoker<std::tuple<void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*> >::operator()() /usr/include/c++/13/bits/std_thread.h:299 (os+0x84a3a) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #7 std::thread::_State_impl<std::thread::_Invoker<std::tuple<void (*)(VlWorkerThread*, VerilatedContext*), VlWorkerThread*, VerilatedContext*> > >::_M_run() /usr/include/c++/13/bits/std_thread.h:244 (os+0x849ec) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #8 <null> <null> (libstdc++.so.6+0xecdb3) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+
+  Location is global 'Verilated::s_lastContextp' of size 8 at 0x557f6a4e6b28 (os+0x1c7b28)
+
+  Thread T9 (tid=16337, running) created by thread T7 at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State> >, void (*)()) <null> (libstdc++.so.6+0xeceb0) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #2 VlWorkerThread::VlWorkerThread(VerilatedContext*) /usr/share/verilator/include/verilated_threads.cpp:53 (os+0x80dc7) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #3 VlThreadPool::VlThreadPool(VerilatedContext*, unsigned int) /usr/share/verilator/include/verilated_threads.cpp:103 (os+0x812fe) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #4 VerilatedContext::threadPoolp() /usr/share/verilator/include/verilated.cpp:2609 (os+0x27ae2) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #5 VerilatedContext::addModel(VerilatedModel*) /usr/share/verilator/include/verilated.cpp:2595 (os+0x27739) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #6 Vdma_top::Vdma_top(VerilatedContext*, char const*) src/Vdma_top.cpp:31 (os+0xeefb) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #7 rtl_dma_init_simulation src/dpi_rtl.cpp:39 (os+0x88cf9) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #8 co_processor src/os.c:127 (os+0x97c5) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+
+  Thread T8 (tid=16336, running) created by thread T7 at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State> >, void (*)()) <null> (libstdc++.so.6+0xeceb0) (BuildId: 753c6c8608b61d4e67be8f0c890e03e0aa046b8b)
+    #2 VlWorkerThread::VlWorkerThread(VerilatedContext*) /usr/share/verilator/include/verilated_threads.cpp:53 (os+0x80dc7) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #3 VlThreadPool::VlThreadPool(VerilatedContext*, unsigned int) /usr/share/verilator/include/verilated_threads.cpp:103 (os+0x812fe) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #4 VerilatedContext::threadPoolp() /usr/share/verilator/include/verilated.cpp:2609 (os+0x27ae2) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #5 VerilatedContext::addModel(VerilatedModel*) /usr/share/verilator/include/verilated.cpp:2595 (os+0x27739) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #6 Vdma_top::Vdma_top(VerilatedContext*, char const*) src/Vdma_top.cpp:31 (os+0xeefb) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #7 rtl_dma_init_simulation src/dpi_rtl.cpp:39 (os+0x88cf9) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+    #8 co_processor src/os.c:127 (os+0x97c5) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+
+SUMMARY: ThreadSanitizer: data race /usr/share/verilator/include/verilated.h:738 in Verilated::lastContextp(VerilatedContext*)
+==================
+3: Dispatched process  6
+	CPU 2: Processed  9 has finished
+	CPU 2: Dispatched process 10
+	CPU 1: Put process  8 to run queue
+Time slot  30
+	CPU 1: Dispatched process  8
+	CPU 0: Put process 11 to run queue
+	CPU 0: Dispatched process 11
+	CPU 3: Put process  6 to run queue
+	CPU 3: Dispatched process  6
+	CPU 2: Put process 10 to run queue
+	CPU 2: Dispatched process 10
+Time slot  31
+	CPU 1: Processed  8 has finished
+	CPU 0: Put process 11 to run queue
+	CPU 1 stopped
+	CPU 0: Dispatched process 11
+	CPU 3: Put process  6 to run queue
+	CPU 3: Dispatched process  6
+Time slot  32
+	CPU 2: Put process 10 to run queue
+	CPU 2: Dispatched process 10
+	CPU 0: Processed 11 has finished
+	CPU 0 stopped
+	CPU 3: Put process  6 to run queue
+Time slot  33
+	CPU 3: Dispatched process  6
+	CPU 2: Put process 10 to run queue
+	CPU 2: Dispatched process 10
+	CPU 3: Put process  6 to run queue
+Time slot  34
+	CPU 3: Dispatched process  6
+	CPU 2: Put process 10 to run queue
+	CPU 2: Dispatched process 10
+	CPU 3: Put process  6 to run queue
+Time slot  35
+	CPU 2: Put process 10 to run queue
+	CPU 2: Dispatched process  6
+	CPU 3: Dispatched process 10
+	CPU 3: Put process 10 to run queue
+	CPU 3: Dispatched process 10
+Time slot  36
+	CPU 2: Put process  6 to run queue
+	CPU 2: Dispatched process  6
+	CPU 3: Processed 10 has finished
+Time slot  37
+	CPU 3 stopped
+	CPU 2: Put process  6 to run queue
+	CPU 2: Dispatched process  6
+Time slot  38
+	CPU 2: Put process  6 to run queue
+	CPU 2: Dispatched process  6
+Time slot  39
+	CPU 2: Put process  6 to run queue
+	CPU 2: Dispatched process  6
+Time slot  40
+	CPU 2: Processed  6 has finished
+	CPU 2 stopped
+==================
+WARNING: ThreadSanitizer: thread leak (pid=16327)
+  Thread T7 (tid=16335, finished) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x5ac1a) (BuildId: 2a13a7710e361d06f7babbea53065ca2be93f738)
+    #1 main src/os.c:318 (os+0xa489) (BuildId: a2df03a80a2b3eef8c7bfdb91b00fb278e2ed110)
+
+SUMMARY: ThreadSanitizer: thread leak src/os.c:318 in main
+==================
+ThreadSanitizer: reported 2 warnings
+Initialized dma_rtl simulation

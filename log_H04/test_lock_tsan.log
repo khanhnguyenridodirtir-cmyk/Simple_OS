@@ -1,0 +1,3 @@
+[H04] test_sched_lock: 4 CPU + 1 loader, 40 proc/round, 300 round
+[H04] 300 round OK: 12000/12000 proc xong dung 1 lan, 2 CPU chay chung = 0, running_list cuoi = 0
+[H04] KET QUA: PASS
