@@ -503,6 +503,27 @@ int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t
   if (srcrg == NULL || dstrg == NULL)
     return -1;
 
+  /* --- 1b. region phai DA CAP PHAT va du cho [offset, offset+size) ---
+   * Phan tu symrgtbl chua cap phat co rg_start == rg_end == 0. Neu bo
+   * qua buoc nay, dia chi ao 0 van dich ra mot frame that (frame cua
+   * region khac!) va DMA ghi de du lieu cua process. Da gap dung truong
+   * hop nay khi chay m2s: "kmalloc 200 2" chua duoc cai nen rg2 rong,
+   * DMA ghi len chinh frame cua rg1. */
+  if (srcrg->rg_end <= srcrg->rg_start ||
+      (addr_t) offset + size > srcrg->rg_end - srcrg->rg_start) {
+    printf("libmem_dma_memcpy: PID %u rg%u chua cap phat hoac copy vuot bien "
+           "[%lu,%lu)\n", caller->pid, src,
+           (unsigned long) srcrg->rg_start, (unsigned long) srcrg->rg_end);
+    return -1;
+  }
+  if (dstrg->rg_end <= dstrg->rg_start ||
+      (addr_t) offset + size > dstrg->rg_end - dstrg->rg_start) {
+    printf("libmem_dma_memcpy: PID %u rg%u chua cap phat hoac copy vuot bien "
+           "[%lu,%lu)\n", caller->pid, dst,
+           (unsigned long) dstrg->rg_start, (unsigned long) dstrg->rg_end);
+    return -1;
+  }
+
   /* --- 2. dia chi ao -> dia chi vat ly ----------------------------
    * Buoc nay phu thuoc pg_getpage()/pte_get_entry() cua TV2.
    * Khi bang trang chua duoc dien thi no bao loi, ta dung lai o day
