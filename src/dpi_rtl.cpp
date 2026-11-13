@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <pthread.h>
 
 // DMA RTL simulation structures
 static Vdma_top* top = nullptr;
@@ -25,6 +26,41 @@ static VerilatedVcdC* tracer = nullptr;
 
 static bool is_tracing = false;
 static uint64_t sim_time = 0;
+
+/* Co ghi waveform hay khong. Mac dinh BAT cho ./dma_testbench.
+ * co_processor() trong ./os phai TAT truoc khi init - ly do o
+ * rtl_dma_set_trace() ben duoi. */
+static bool g_trace_wanted = true;
+
+/* ===================================================================
+ * Khoa cho model Verilator
+ * -------------------------------------------------------------------
+ * Duoi ./os co HAI loai thread cung cham vao mot doi tuong `top`:
+ *   - thread CPU  goi dpi_rtl_dma_start()  (qua libmem_dma_memcpy)
+ *   - thread DMA  goi dpi_rtl_dma_tick() / _reap()  (co_processor)
+ * Ca hai deu goi top->eval(). Model Verilator KHONG thread-safe: hai
+ * eval() chong nhau se lam hong trang thai ben trong mach. Moi ham
+ * public duoi day giu khoa nay trong suot than ham.
+ * =================================================================== */
+static pthread_mutex_t g_dma_lock = PTHREAD_MUTEX_INITIALIZER;
+struct DmaLock {
+    DmaLock()  { pthread_mutex_lock(&g_dma_lock); }
+    ~DmaLock() { pthread_mutex_unlock(&g_dma_lock); }
+};
+
+/**
+ * rtl_dma_set_trace - bat/tat ghi file rtl_trace.vcd
+ *
+ * PHAI tat khi chay trong ./os. Thu vien Verilator ghi VCD bang ham
+ * POSIX ::write(fd, buf, len). Nhung src/cpu.c:60 cua OS dinh nghia mot
+ * ham C toan cuc cung ten `write(struct pcb_t*, ...)`. Linker noi loi
+ * goi cua Verilator vao ham cua cpu.c -> segfault luc flush/close VCD.
+ * ./dma_testbench khong link cpu.c nen khong bi.
+ * Goi TRUOC rtl_dma_init_simulation().
+ */
+extern "C" void rtl_dma_set_trace(int on) {
+    g_trace_wanted = (on != 0);
+}
 
 /**
  * rtl_dma_init_simulation - Initialize the RTL simulation for DMA
@@ -38,12 +74,16 @@ extern "C" int rtl_dma_init_simulation(void) {
     context->commandArgs(0, args);
     top = new Vdma_top(context, "dma_top");
     
-    tracer = new VerilatedVcdC;
-    context->traceEverOn(true);
-    top->trace(tracer, 99);
-    tracer->open("rtl_trace.vcd");
-    is_tracing = true;
     sim_time = 0;
+    if (g_trace_wanted) {
+        tracer = new VerilatedVcdC;
+        context->traceEverOn(true);
+        top->trace(tracer, 99);
+        tracer->open("rtl_trace.vcd");
+        is_tracing = true;
+    } else {
+        is_tracing = false;
+    }
     
     printf("Initialized dma_rtl simulation\n");
     return 0;
@@ -103,6 +143,7 @@ static inline void tick_one_cycle(void) {
  */
 extern "C" int dpi_rtl_dma_start(uint64_t source, uint64_t destination,
                                  uint64_t length) {
+    DmaLock lk;
     if (!top) {
         printf("Cannot start DMA: RTL simulation not initialized\n");
         return -1;
@@ -145,6 +186,7 @@ extern "C" int dpi_rtl_dma_start(uint64_t source, uint64_t destination,
  * tra 1 neu job da ket thuc, 0 neu con chay
  */
 extern "C" int dpi_rtl_dma_tick(int nclk) {
+    DmaLock lk;
     if (!top || g_state != DMA_JOB_RUNNING) {
         return (g_state == DMA_JOB_DONE || g_state == DMA_JOB_ERROR);
     }
@@ -171,13 +213,14 @@ extern "C" int dpi_rtl_dma_tick(int nclk) {
     return 0;   /* con chay, slot sau tick tiep */
 }
 
-extern "C" dma_job_state_t dpi_rtl_dma_state(void) { return g_state; }
+extern "C" dma_job_state_t dpi_rtl_dma_state(void) { DmaLock lk; return g_state; }
 
 extern "C" uint32_t dpi_rtl_dma_bytes(void) {
+    DmaLock lk;
     return top ? (uint32_t) top->ch_bytes_transferred : 0u;
 }
 
-extern "C" uint64_t dpi_rtl_dma_cycles(void) { return g_cycles; }
+extern "C" uint64_t dpi_rtl_dma_cycles(void) { DmaLock lk; return g_cycles; }
 
 /**
  * dpi_rtl_dma_reap - nha kenh, tra channel ve IDLE
@@ -188,6 +231,7 @@ extern "C" uint64_t dpi_rtl_dma_cycles(void) { return g_cycles; }
  * vi current_state <= next_state nam trong khoi tuan tu theo clk.
  */
 extern "C" int dpi_rtl_dma_reap(void) {
+    DmaLock lk;
     if (!top) return -1;
 
     top->desc_valid = 0;
@@ -210,6 +254,7 @@ extern "C" int dpi_rtl_dma_reap(void) {
  * tiep dung cho dang do.
  */
 extern "C" void dpi_rtl_dma_pause(int on) {
+    DmaLock lk;
     if (top) top->ch_pause = on ? 1 : 0;
 }
 

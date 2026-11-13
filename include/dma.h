@@ -35,6 +35,12 @@ int do_dma(struct pcb_t *caller, uint64_t source, uint64_t destination, uint64_t
 int do_dma_start(struct pcb_t *caller, uint64_t source, uint64_t destination, uint64_t length);
 int do_dma_poll(int nclk);
 
+/* Hang doi phan mem khi kenh ban (mach chi co 1 kenh).
+ * do_dma_start tra 0 = da chay, 1 = da xep hang, -1 = loi.
+ * co_processor goi do_dma_kick() moi slot de chay yeu cau ke tiep. */
+int do_dma_kick(void);
+int do_dma_pending(void);
+
 #ifdef __cplusplus
 }
 #endif
