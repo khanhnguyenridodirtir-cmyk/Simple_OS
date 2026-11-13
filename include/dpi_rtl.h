@@ -26,6 +26,11 @@ int dpi_rtl_dma_copy(uint64_t src_offset, uint64_t dst_offset, uint64_t length);
 int dpi_rtl_dma_is_available(void);
 void dma_done_callback(void);
 
+/* Bat/tat ghi rtl_trace.vcd. ./os PHAI goi rtl_dma_set_trace(0) truoc
+ * rtl_dma_init_simulation(): ham write() cua src/cpu.c trung ten voi
+ * POSIX write() ma Verilator dung de ghi VCD. */
+void rtl_dma_set_trace(int on);
+
 /* ===================================================================
  * Giao dien DMA bat dong bo  (TV4 - T03)
  * -------------------------------------------------------------------

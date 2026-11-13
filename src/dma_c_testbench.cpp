@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <pthread.h>
 #include <cstdbool>
 #include <thread>
 #include <atomic>
@@ -162,28 +163,103 @@ extern "C" int do_dma(struct pcb_t *caller,uint64_t source, uint64_t destination
     return test_errors;
 }
 
+/* ===================================================================
+ * Hang doi yeu cau DMA (phan mem)
+ * -------------------------------------------------------------------
+ * Mach chi co MOT kenh va last_desc = 1 cung, nen khong co hang doi
+ * phan cung. Duoi ./os co 4 CPU: hai process co the cung xin DMA.
+ * Thay vi tra loi -1 (lenh dma_memcpy that bai), ta xep yeu cau vao
+ * mot hang doi FIFO; co_processor() goi do_dma_kick() moi time slot
+ * de khoi dong yeu cau ke tiep khi kenh ranh.
+ * Day chinh la "device request queue" trong chuong I/O Systems.
+ * =================================================================== */
+#define DMA_REQ_QUEUE_LEN 16
+
+struct dma_req { uint64_t src, dst, len; uint32_t pid; };
+
+static struct dma_req  g_req[DMA_REQ_QUEUE_LEN];
+static int             g_req_head = 0, g_req_count = 0;
+static pthread_mutex_t g_req_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* kiem tra ca khoang [off, off+len) nam trong bank,
+ * khong chi byte dau - neu khong mach se doc/ghi qua cuoi RAM */
+static int range_ok(uint64_t off, uint64_t len) {
+    if (len == 0) return memory_bank_get_ptr(off) != NULL;
+    return memory_bank_get_ptr(off) != NULL &&
+           memory_bank_get_ptr(off + len - 1) != NULL;
+}
+
 /*
  * do_dma_start - khoi dong DMA roi TRA VE NGAY (duong bat dong bo)
- * Dung cho luong: CPU nap lenh -> di lam viec khac -> thinh thoang hoi.
+ *   tra  0 = mach da nhan lenh, dang chay
+ *        1 = kenh dang ban, yeu cau da duoc XEP HANG
+ *       -1 = offset ngoai mien, hoac hang doi day
  */
 extern "C" int do_dma_start(struct pcb_t *caller, uint64_t source,
                             uint64_t destination, uint64_t length) {
-    void *src = NULL, *dst = NULL;
-
     if (!memory_bank_is_available()
         && caller && caller->krnl && caller->krnl->mram
         && caller->krnl->mram->storage) {
         memory_bank_attach(caller->krnl->mram->storage,
                            (size_t) caller->krnl->mram->maxsz);
     }
-    src = memory_bank_get_ptr(source);
-    dst = memory_bank_get_ptr(destination);
-    if (!src || !dst) {
+    if (!range_ok(source, length) || !range_ok(destination, length)) {
         printf("do_dma_start: offset ngoai mien\n");
         return -1;
     }
 
-    return dpi_rtl_dma_start(source, destination, length);
+    uint32_t pid = caller ? caller->pid : 0;
+    int rc;
+
+    pthread_mutex_lock(&g_req_lock);
+    /* Da co nguoi xep hang thi KHONG duoc chen ngang: vao cuoi hang.
+     * Chi khi hang rong moi thu khoi dong thang. */
+    if (g_req_count == 0 &&
+        dpi_rtl_dma_start(source, destination, length) == 0) {
+        rc = 0;
+    } else if (g_req_count < DMA_REQ_QUEUE_LEN) {
+        int tail = (g_req_head + g_req_count) % DMA_REQ_QUEUE_LEN;
+        g_req[tail].src = source;
+        g_req[tail].dst = destination;
+        g_req[tail].len = length;
+        g_req[tail].pid = pid;
+        g_req_count++;
+        rc = 1;
+    } else {
+        rc = -1;            /* hang day */
+    }
+    pthread_mutex_unlock(&g_req_lock);
+    return rc;
+}
+
+/*
+ * do_dma_kick - neu kenh ranh va co yeu cau dang cho thi khoi dong no
+ * co_processor() goi ham nay moi time slot.
+ *   tra pid cua yeu cau vua khoi dong, hoac -1 neu khong co gi
+ */
+extern "C" int do_dma_kick(void) {
+    int started = -1;
+    pthread_mutex_lock(&g_req_lock);
+    if (g_req_count > 0) {
+        struct dma_req *r = &g_req[g_req_head];
+        /* chi lay ra khoi hang khi mach THUC SU nhan; neu mot CPU vua
+         * kip khoi dong job khac thi de nguyen, slot sau thu lai */
+        if (dpi_rtl_dma_start(r->src, r->dst, r->len) == 0) {
+            started = (int) r->pid;
+            g_req_head = (g_req_head + 1) % DMA_REQ_QUEUE_LEN;
+            g_req_count--;
+        }
+    }
+    pthread_mutex_unlock(&g_req_lock);
+    return started;
+}
+
+/* so yeu cau dang cho trong hang */
+extern "C" int do_dma_pending(void) {
+    pthread_mutex_lock(&g_req_lock);
+    int n = g_req_count;
+    pthread_mutex_unlock(&g_req_lock);
+    return n;
 }
 
 /*
@@ -281,6 +357,10 @@ int main(int argc, char** argv) {
     } else {
         result = do_dma(caller, source, destination, length);
     }
+
+    /* Dong tracer -> rtl_trace.vcd moi co du lieu de mo bang GTKWave.
+     * O day an toan vi ./dma_testbench khong link src/cpu.c. */
+    rtl_dma_cleanup_simulation();
 
     // Cleanup
     free(caller->krnl->active_mswp);

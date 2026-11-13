@@ -522,12 +522,14 @@ int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t
    * Day la diem mau chot cua yeu cau "asynchronous": ham nay chay
    * tren thread CPU, no KHONG duoc cho DMA xong. co_processor()
    * se cap nhip clock va thu ket qua o cac time slot sau. */
-  if (do_dma_start(caller, sphy, dphy, (uint64_t) len) != 0) {
-    printf("libmem_dma_memcpy: kenh DMA dang ban\n");
+  int rc = do_dma_start(caller, sphy, dphy, (uint64_t) len);
+  if (rc < 0) {
+    printf("libmem_dma_memcpy: offset ngoai mien hoac hang doi DMA day\n");
     return -1;
   }
 
-  printf("\tDMA: nap lenh rg%u -> rg%u, %u byte (lam tron %u), CPU chay tiep\n",
+  printf("\tDMA: PID %u %s rg%u -> rg%u, %u byte (lam tron %u), CPU chay tiep\n",
+         caller->pid, rc == 0 ? "nap lenh" : "kenh ban, XEP HANG",
          src, dst, size, len);
   return 0;
 }

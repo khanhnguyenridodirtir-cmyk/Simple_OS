@@ -136,6 +136,10 @@ static void * cpu_routine(void * args) {
 static void * co_processor(void *arg) {
     struct timer_id_t * timer_id = (struct timer_id_t *) arg;
 
+    /* Tat ghi VCD: ham write() cua cpu.c trung ten voi POSIX write()
+     * ma Verilator dung de ghi file -> segfault luc dong file. */
+    rtl_dma_set_trace(0);
+
     if (rtl_dma_init_simulation() != 0) {
         printf("Cannot initialize RTL simulation\n");
         if (timer_id) detach_event(timer_id);
@@ -144,7 +148,13 @@ static void * co_processor(void *arg) {
 
     int attached = 0;
 
-    while (cpu_alive > 0) {
+    /* Chay toi khi het CPU VA het viec DMA. Process phat lenh DMA roi
+     * chay tiep (bat dong bo) nen co the KET THUC truoc khi DMA cua no
+     * xong. Neu dung som theo cpu_alive thi job dang chay va cac yeu
+     * cau trong hang doi bi bo do giua chung. */
+    while (cpu_alive > 0
+           || dpi_rtl_dma_state() == DMA_JOB_RUNNING
+           || do_dma_pending() > 0) {
         /* ld_routine() moi la cho gan os.mram, va no chay song song
          * voi thread nay, nen phai doi den khi co RAM roi moi noi bus. */
         if (!attached && os.mram != NULL && os.mram->storage != NULL) {
@@ -161,6 +171,15 @@ static void * co_processor(void *arg) {
                  * ch_enable roi dap them nhip thi mach moi nha kenh. */
                 dpi_rtl_dma_reap();
             }
+        }
+
+        /* Kenh ranh ma con yeu cau xep hang thi khoi dong cai ke tiep.
+         * Lam ngay trong slot nay nen job sau khong phai doi them. */
+        if (dpi_rtl_dma_state() == DMA_JOB_IDLE) {
+            int pid = do_dma_kick();
+            if (pid >= 0)
+                printf("\tDMA: lay yeu cau cua PID %d khoi hang doi "
+                       "(con %d cho)\n", pid, do_dma_pending());
         }
 
         if (timer_id) next_slot(timer_id);
