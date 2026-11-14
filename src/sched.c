@@ -7,7 +7,6 @@
  * personal permission to use and modify the Licensed Source Code
  * for the sole purpose of studying while attending the course CO2018.
  */
-
 #include "queue.h"
 #include "sched.h"
 #include <pthread.h>
