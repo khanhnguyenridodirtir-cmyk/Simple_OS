@@ -117,7 +117,7 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
   // TH2 xet lay ko du thi 
   
   /* TODO get_free_vmrg_area FAILED handle the region management (Fig.6)*/
-  struct sc_regs regs;
+  struct sc_regs regs={0};
   regs.a1 = SYSMEM_INC_OP;
   regs.a2 = vmaid;
   regs.a3 = size;
@@ -527,7 +527,7 @@ int __read(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE *data)
   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
 
   /* TODO Invalid memory identify */
-  if (currg == NULL || cur_vma == NULL){
+  if (currg == NULL || cur_vma == NULL || offset < currg->rg_end - currg->rg_start){
     pthread_mutex_unlock(&mmvm_lock);
     return -1;
   }
@@ -584,7 +584,7 @@ int __write(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE value
   struct vm_rg_struct *currg = get_symrg_byid(caller->mm, rgid);
   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
 
-  if (currg == NULL || cur_vma == NULL) /* Invalid memory identify */
+  if (currg == NULL || cur_vma == NULL || offset < currg->rg_end - currg->rg_start) /* Invalid memory identify */
   {
     pthread_mutex_unlock(&mmvm_lock);
     return -1;
@@ -1075,30 +1075,38 @@ int __write_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, B
  */
 int free_pcb_memph(struct pcb_t *caller)
 {
+   if (caller == NULL || caller->mm == NULL ||
+        caller->mm->pgd == NULL || caller->krnl == NULL ||
+        caller->krnl->mram == NULL)
+        return -1;
+
   pthread_mutex_lock(&mmvm_lock);
   int pagenum, fpn;
-  uint32_t pte;
+ 
 
   for (pagenum = 0; pagenum < PAGING_MAX_PGN; pagenum++)
   {
-    pte = caller->mm->pgd[pagenum];
+       uint64_t pte = caller->mm->pgd[pagenum];
 
-    if (PAGING_PAGE_PRESENT(pte))
-    {
-      fpn = PAGING_FPN(pte);
-      MEMPHY_put_freefp(caller->krnl->mram, fpn);
-    }
-    else
-    {
-      fpn = PAGING_SWP(pte);
-      MEMPHY_put_freefp(caller->krnl->active_mswp, fpn);
-    }
-  }
+        if (PAGING_PAGE_PRESENT(pte))
+        {
+            fpn = PAGING_FPN(pte);
+            MEMPHY_put_freefp(caller->krnl->mram, fpn);
+        }
+        else if (pte & PAGING_PTE_SWAPPED_MASK)
+        {
+            fpn = PAGING_SWP(pte);
 
-  pthread_mutex_unlock(&mmvm_lock);
-  return 0;
+            if (caller->krnl->active_mswp != NULL)
+                MEMPHY_put_freefp(caller->krnl->active_mswp, fpn);
+        }
+
+        caller->mm->pgd[pagenum] = 0;
+    }
+
+    pthread_mutex_unlock(&mmvm_lock);
+    return 0;
 }
-
 
 /*find_victim_page - find victim page
  *@caller: caller
