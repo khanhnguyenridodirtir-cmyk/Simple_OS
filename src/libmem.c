@@ -59,9 +59,11 @@ int enlist_vm_freerg_list(struct mm_struct *mm, struct vm_rg_struct *rg_elmt)
  */
 struct vm_rg_struct *get_symrg_byid(struct mm_struct *mm, int rgid)
 {
-  if (rgid < 0 || rgid >= PAGING_MAX_SYMTBL_SZ)
+  // B1: Kiem tra page table va chi so symbol
+  if (mm == NULL || rgid < 0 || rgid >= PAGING_MAX_SYMTBL_SZ)
     return NULL;
 
+  // B2: Tra ve entry tu symbol table
   return &mm->symrgtbl[rgid];
 }
 
@@ -276,107 +278,152 @@ int pg_getpage(struct mm_struct *mm, int pgn, int *fpn, struct pcb_t *caller)
 {
   // B1: Xac dinh tinh hop le cua input
   if (mm == NULL || fpn == NULL || caller == NULL ||
-      caller->mm == NULL || caller->krnl == NULL ||
-      caller->krnl->mram == NULL)
+      caller->mm == NULL || caller->krnl == NULL || caller->krnl->mram == NULL ||
+      pgn < 0 || pgn >= PAGING_MAX_PGN || mm->pgd == NULL)
     return -1;
 
+  // B2: Xac dinh page table dang thao tac la Kernel hay User
+  int is_kernel_mm = (mm == caller->krnl->mm);
   uint64_t pte = pte_get_entry(mm, pgn, caller);
 
-  if (!PAGING_PAGE_PRESENT(pte))
-  { /* Page is not online, make it actively living */
-    
-    addr_t vicpgn;
-    uint64_t vicpte;
-    addr_t vicfpn, swpfpn;
-    addr_t tgtfpn; // Khung trang dich se chua du lieu cua trang pgn
+  // B3: Neu trang da nam trong RAM thi tra ve frame hien tai
+  if (PAGING_PAGE_PRESENT(pte))
+  {
+    *fpn = PAGING_FPN(pte);
+    return 0;
+  }
 
-    /* Buoc 1: Uu tien xin frame trong truc tiep tu RAM truoc */
-    if (MEMPHY_get_freefp(caller->krnl->mram, &tgtfpn) == -1)
-    {
-      /* RAM da het frame trong -> Tim trang nan nhan (Victim) theo FIFO */
-      if (find_victim_page(mm, &vicpgn) == -1)
-      {
-        // Xin ko dc thi out
-        return -1;
-      }
+  // B4: Kernel Memory khong duoc phep SWAP theo phuong an A
+  if (is_kernel_mm)
+  {
+    addr_t kernel_fpn;
 
-      /* Lay so hieu frame vat ly cua trang nan nhan */
-      vicpte = pte_get_entry(mm, vicpgn, caller);
-      vicfpn = PAGING_FPN(vicpte);
-
-      /* Xin mot frame trong ben vung nho SWAP */
-      if (caller->krnl->active_mswp == NULL ||
-          MEMPHY_get_freefp(caller->krnl->active_mswp, &swpfpn) == -1)
-          {
-           /* Khoi phuc lai victim vao danh sach FIFO do het SWAP */
-            enlist_pgn_node(&mm->fifo_pgn, vicpgn);
-            return -1;
-          }
-
-      /* Copy du lieu trang nan nhan tu RAM (vicfpn) sang SWAP (swpfpn) qua syscall 17 */
-      struct sc_regs regs;
-      regs.a1 = SYSMEM_SWP_OP;
-      regs.a2 = vicfpn;
-      regs.a3 = swpfpn;
-      regs.a4 = 0;
-      if (_syscall(caller->krnl, caller->pid, 17, &regs) < 0)
-      {
-        MEMPHY_put_freefp(caller->krnl->active_mswp, swpfpn);
-        enlist_pgn_node(&mm->fifo_pgn, vicpgn);
-        return -1;
-      }
-
-      /* Cap nhat bang trang cho nan nhan (danh dau da bi day ra SWAP) */
-      if (pte_set_swap(caller, vicpgn, 0, swpfpn) < 0)
-      {
-        MEMPHY_put_freefp(caller->krnl->active_mswp, swpfpn);
-        enlist_pgn_node(&mm->fifo_pgn, vicpgn);
-        return -1;
-      }
-
-      /* Chiem lay khung trang RAM cua nan nhan cho trang hien tai */
-      tgtfpn = vicfpn;
-    }
-
-    /* Buoc 2: Neu trang pgn truoc do tung bi day ra SWAP, nap nguoc lai vao tgtfpn */
+    // B4.1: Kernel chi duoc lay frame RAM con trong
     if (pte & PAGING_PTE_SWAPPED_MASK)
+      return -1;
+
+    if (MEMPHY_get_freefp(caller->krnl->mram, &kernel_fpn) < 0)
+      return -1;
+
+    // B4.2: Gan frame vao page table Kernel, khong dua vao FIFO User
+    if (pte_set_fpn(mm, pgn, kernel_fpn, caller) < 0)
     {
-      swpfpn = PAGING_SWP(pte);
-
-      /* Copy du lieu tu SWAP (swpfpn) nguoc ve RAM (tgtfpn) */
-     struct sc_regs regs;
-      regs.a1 = SYSMEM_SWP_OP;
-      regs.a2 = tgtfpn; // Phai dung tgtfpn!
-      regs.a3 = swpfpn;
-      regs.a4 = 1; // Chieu SWAP -> RAM
-      if (_syscall(caller->krnl, caller->pid, 17, &regs) < 0)
-      {
-        MEMPHY_put_freefp(caller->krnl->mram, tgtfpn);
-        return -1;
-      }
-
-      /* Tra lai frame SWAP vua doc xong vao danh sach trong */
-      if (MEMPHY_put_freefp(caller->krnl->active_mswp, swpfpn) < 0)
-      {
-        return -1;
-      }
+      MEMPHY_put_freefp(caller->krnl->mram, kernel_fpn);
+      return -1;
     }
 
-    /* Buoc 3: Cap nhat bang trang va dua trang pgn vao danh sach FIFO */
-    if (pte_set_fpn(mm, pgn, tgtfpn, caller) < 0)
+    *fpn = (int)kernel_fpn;
+    return 0;
+  }
+
+  // B5: User Memory - uu tien lay frame RAM trong
+  addr_t vicpgn;
+  uint64_t vicpte;
+  addr_t vicfpn, swpfpn;
+  addr_t tgtfpn; // Khung trang dich se chua du lieu cua trang pgn
+
+  /* Buoc 1: Uu tien xin frame trong truc tiep tu RAM truoc */
+  if (MEMPHY_get_freefp(caller->krnl->mram, &tgtfpn) < 0)
+  {
+    /* RAM da het frame trong -> Tim trang nan nhan (Victim) theo FIFO */
+    // B5.1: RAM het frame - chon victim theo FIFO cua User MM
+    if (find_victim_page(mm, &vicpgn) < 0)
+      return -1;
+
+    /* Lay so hieu frame vat ly cua trang nan nhan */
+    vicpte = pte_get_entry(mm, vicpgn, caller);
+    if (!PAGING_PAGE_PRESENT(vicpte))
+    {
+      enlist_pgn_node(&mm->fifo_pgn, vicpgn);
+      return -1;
+    }
+    vicfpn = PAGING_FPN(vicpte);
+
+    /* Xin mot frame trong ben vung nho SWAP */
+    // B5.2: Xin frame SWAP de luu victim
+    if (caller->krnl->active_mswp == NULL ||
+        MEMPHY_get_freefp(caller->krnl->active_mswp, &swpfpn) < 0)
+    {
+      enlist_pgn_node(&mm->fifo_pgn, vicpgn);
+      return -1;
+    }
+
+    /* Copy du lieu trang nan nhan tu RAM (vicfpn) sang SWAP (swpfpn) qua syscall 17 */
+    // B5.3: Copy RAM -> SWAP bang syscall 17
+    struct sc_regs swap_regs = {0};
+    swap_regs.a1 = SYSMEM_SWP_OP;
+    swap_regs.a2 = vicfpn;
+    swap_regs.a3 = swpfpn;
+    swap_regs.a4 = 0;
+    if (_syscall(caller->krnl, caller->pid, 17, &swap_regs) < 0)
+    {
+      MEMPHY_put_freefp(caller->krnl->active_mswp, swpfpn);
+      enlist_pgn_node(&mm->fifo_pgn, vicpgn);
+      return -1;
+    }
+
+    /* Cap nhat bang trang cho nan nhan (danh dau da bi day ra SWAP) */
+    // B5.4: Cap nhat PTE victim thanh trang da swap
+    if (pte_set_swap(caller, vicpgn, 0, swpfpn) < 0)
+    {
+      MEMPHY_put_freefp(caller->krnl->active_mswp, swpfpn);
+      enlist_pgn_node(&mm->fifo_pgn, vicpgn);
+      return -1;
+    }
+
+    /* Chiem lay khung trang RAM cua nan nhan cho trang hien tai */
+    // B5.5: Tai su dung frame RAM cua victim cho trang dich
+    tgtfpn = vicfpn;
+  }
+
+  /* Buoc 2: Neu trang pgn truoc do tung bi day ra SWAP, nap nguoc lai vao tgtfpn */
+  // B6: Neu trang dich dang nam trong SWAP thi nap lai vao RAM
+  if (pte & PAGING_PTE_SWAPPED_MASK)
+  {
+    swpfpn = PAGING_SWP(pte);
+    if (caller->krnl->active_mswp == NULL)
     {
       MEMPHY_put_freefp(caller->krnl->mram, tgtfpn);
       return -1;
     }
 
-    if (enlist_pgn_node(&mm->fifo_pgn, pgn) < 0)
+    /* Copy du lieu tu SWAP (swpfpn) nguoc ve RAM (tgtfpn) */
+    struct sc_regs swap_regs = {0};
+    swap_regs.a1 = SYSMEM_SWP_OP;
+    swap_regs.a2 = tgtfpn; // Phai dung tgtfpn!
+    swap_regs.a3 = swpfpn;
+    swap_regs.a4 = 1; // Chieu SWAP -> RAM
+    if (_syscall(caller->krnl, caller->pid, 17, &swap_regs) < 0)
     {
+      MEMPHY_put_freefp(caller->krnl->mram, tgtfpn);
+      return -1;
+    }
+
+    /* Tra lai frame SWAP vua doc xong vao danh sach trong */
+    // B6.1: Giai phong frame SWAP da nap xong
+    if (MEMPHY_put_freefp(caller->krnl->active_mswp, swpfpn) < 0)
+    {
+      MEMPHY_put_freefp(caller->krnl->mram, tgtfpn);
       return -1;
     }
   }
 
-  *fpn = PAGING_FPN(pte_get_entry(mm, pgn, caller));
+  /* Buoc 3: Cap nhat bang trang va dua trang pgn vao danh sach FIFO */
+  // B7: Cap nhat PTE User va dua trang vao FIFO
+  if (pte_set_fpn(mm, pgn, tgtfpn, caller) < 0)
+  {
+    MEMPHY_put_freefp(caller->krnl->mram, tgtfpn);
+    return -1;
+  }
 
+  if (enlist_pgn_node(&mm->fifo_pgn, pgn) < 0)
+  {
+    MEMPHY_put_freefp(caller->krnl->mram, tgtfpn);
+    pte_set_entry(mm, pgn, 0, caller);
+    return -1;
+  }
+
+  *fpn = (int)tgtfpn;
   return 0;
 }
 
@@ -398,14 +445,18 @@ int pg_getval(struct mm_struct *mm, int addr, BYTE *data, struct pcb_t *caller)
   if (pg_getpage(mm, pgn, &fpn, caller) != 0)
     return -1; /* invalid page access */
 
-  addr_t phyaddr = ((addr_t)fpn << PAGING_ADDR_OFFST_LOBIT) + off;
+#ifdef MM64
+  addr_t phyaddr = (addr_t)fpn * PAGING64_PAGESZ + off;
+#else
+  addr_t phyaddr = (addr_t)fpn * PAGING_PAGESZ + off;
+#endif
 
    /* TODO 
    *  MEMPHY_read(caller->krnl->mram, phyaddr, data);
    *  MEMPHY READ 
    *  SYSCALL 17 sys_memmap with SYSMEM_IO_READ
    */
-  struct sc_regs regs;
+  struct sc_regs regs = {0};
   regs.a1 = SYSMEM_IO_READ;
   regs.a2 = phyaddr;
 
@@ -439,14 +490,18 @@ int pg_setval(struct mm_struct *mm, int addr, BYTE value, struct pcb_t *caller)
   if (pg_getpage(mm, pgn, &fpn, caller) != 0)
     return -1; /* invalid page access */
 
-  int phyaddr = ((addr_t)fpn << PAGING_ADDR_OFFST_LOBIT) + off;
+#ifdef MM64
+  addr_t phyaddr = (addr_t)fpn * PAGING64_PAGESZ + off;
+#else
+  addr_t phyaddr = (addr_t)fpn * PAGING_PAGESZ + off;
+#endif
 
   /* TODO 
    *  MEMPHY_write(caller->krnl->mram, phyaddr, value);
    *  MEMPHY WRITE with SYSMEM_IO_WRITE 
    * SYSCALL 17 sys_memmap
    */
-  struct sc_regs regs;
+  struct sc_regs regs = {0};
   regs.a1 = SYSMEM_IO_WRITE;
   regs.a2 = phyaddr;
   regs.a3 = value;
@@ -573,6 +628,81 @@ int libwrite(
 }
 
 
+/*
+ * Kernel/User region helpers used by the kmem and copy routines.
+ * These helpers keep the existing public function prototypes unchanged.
+ */
+static int get_free_vmrg_area_mm(struct mm_struct *mm, int vmaid, addr_t size,
+                                 struct vm_rg_struct *newrg)
+{
+  // B1: Kiem tra dau vao va VMA
+  if (mm == NULL || newrg == NULL || size == 0)
+    return -1;
+
+  struct vm_area_struct *vma = get_vma_by_num(mm, vmaid);
+  if (vma == NULL)
+    return -1;
+
+  // B2: Tim first-fit region trong free list
+  struct vm_rg_struct *node = vma->vm_freerg_list;
+  while (node != NULL)
+  {
+    if (node->rg_start <= node->rg_end &&
+        size <= node->rg_end - node->rg_start)
+    {
+      // B3: Ghi nhan vung cap phat
+      newrg->rg_start = node->rg_start;
+      newrg->rg_end = node->rg_start + size;
+
+      // B4: Cap nhat free list sau khi cat vung da cap
+      if (newrg->rg_end < node->rg_end)
+        node->rg_start = newrg->rg_end;
+      else
+      {
+        struct vm_rg_struct *next = node->rg_next;
+        if (next != NULL)
+        {
+          node->rg_start = next->rg_start;
+          node->rg_end = next->rg_end;
+          node->rg_next = next->rg_next;
+          free(next);
+        }
+        else
+        {
+          node->rg_start = node->rg_end;
+          node->rg_next = NULL;
+        }
+      }
+      newrg->rg_next = NULL;
+      return 0;
+    }
+    node = node->rg_next;
+  }
+
+  return -1;
+}
+
+static int validate_mem_region(struct mm_struct *mm, int vmaid, int rgid,
+                               addr_t offset, addr_t size)
+{
+  // B1: Kiem tra symbol va VMA
+  if (mm == NULL || size == 0)
+    return -1;
+  struct vm_rg_struct *region = get_symrg_byid(mm, rgid);
+  struct vm_area_struct *vma = get_vma_by_num(mm, vmaid);
+  if (region == NULL || vma == NULL ||
+      (region->rg_start == 0 && region->rg_end == 0) ||
+      region->rg_start >= region->rg_end)
+    return -1;
+
+  // B2: Kiem tra toan bo khoang [offset, offset + size)
+  addr_t region_size = region->rg_end - region->rg_start;
+  if (offset > region_size || size > region_size - offset)
+    return -1;
+
+  return 0;
+}
+
 /*libkmem_malloc- alloc region memory in kmem
  *@caller: caller
  *@rgid: memory region ID (used to identify variable in symbole table)
@@ -581,17 +711,25 @@ int libwrite(
 
 int libkmem_malloc(struct pcb_t * caller, uint32_t size, uint32_t reg_index)
 {
-  /* 
+  /*
    * TODO: provide OS level management
    *       and forward the request to helper
    */
-//addr_t  addr;
-//int val = ...
+  // B1: Kiem tra tien dieu kien cap phat Kernel Memory
+  if (caller == NULL || caller->krnl == NULL || caller->krnl->mm == NULL ||
+      caller->krnl->mram == NULL || size == 0 ||
+      reg_index >= PAGING_MAX_SYMTBL_SZ)
+    return -1;
 
-  /* 
+  /*
    * TODO: provide OS kmem allocation validation
    */
+  // B2: Chuyen yeu cau den bo cap phat Kernel Memory
+  addr_t alloc_addr = 0;
+  if (__kmalloc(caller, 0, (int)reg_index, size, &alloc_addr) == (addr_t)-1)
+    return -1;
 
+  // B3: Giu cung quy uoc voi liballoc: thanh cong tra ve 0
   return 0;
 }
 
@@ -612,10 +750,89 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
   //krnl->symrgtbl...
   //krnl->krnl_pgd ...
 
+  // B1: Kiem tra dau vao va Kernel MM
+  if (caller == NULL || caller->krnl == NULL || caller->krnl->mm == NULL ||
+      caller->krnl->mram == NULL || alloc_addr == NULL || size == 0 ||
+      rgid < 0 || rgid >= PAGING_MAX_SYMTBL_SZ)
+    return -1;
+
+  pthread_mutex_lock(&kmm_lock);
+
+  // B2: Lay Kernel MM, VMA va symbol entry tu cau truc cua OS
+  struct mm_struct *kmm = caller->krnl->mm;
+  struct vm_area_struct *kvma = get_vma_by_num(kmm, vmaid);
+  struct vm_rg_struct *symrg = get_symrg_byid(kmm, rgid);
+  if (kvma == NULL || symrg == NULL ||
+      symrg->rg_start != 0 || symrg->rg_end != 0)
+  {
+    pthread_mutex_unlock(&kmm_lock);
+    return -1;
+  }
+
+  // B3: Thu lay vung trong da duoc cap truoc do
+  struct vm_rg_struct alloc_rg;
+  if (get_free_vmrg_area_mm(kmm, vmaid, size, &alloc_rg) < 0)
+  {
+    // B4: Neu khong du, mo rong Kernel VMA theo boi so cua kich thuoc page
+#ifdef MM64
+    addr_t page_size = PAGING64_PAGESZ;
+#else
+    addr_t page_size = PAGING_PAGESZ;
+#endif
+    addr_t page_count = (size + page_size - 1) / page_size;
+    addr_t aligned_size = page_count * page_size;
+    addr_t map_start = kvma->sbrk;
+
+    // B4.1: Kiem tra gioi han page table truoc khi cap frame
+    if (map_start % page_size != 0 ||
+        map_start / page_size + page_count > PAGING_MAX_PGN)
+    {
+      pthread_mutex_unlock(&kmm_lock);
+      return -1;
+    }
+
+    // B4.2: Map Kernel pages vao RAM; ham nay khong dung SWAP/FIFO
+    struct vm_rg_struct *newrg = malloc(sizeof(struct vm_rg_struct));
+    if (newrg == NULL)
+    {
+      pthread_mutex_unlock(&kmm_lock);
+      return -1;
+    }
+
+    if (vm_map_kernel(caller, kvma->vm_start, kvma->vm_end,
+                      map_start, (int)page_count, newrg) == (addr_t)-1)
+    {
+      free(newrg);
+      pthread_mutex_unlock(&kmm_lock);
+      return -1;
+    }
+
+    // B4.3: Cap nhat break va danh sach vung trong cua Kernel VMA
+    kvma->sbrk += aligned_size;
+    kvma->vm_end = kvma->sbrk;
+    newrg->rg_next = NULL;
+    if (enlist_vm_rg_node(&kvma->vm_freerg_list, newrg) < 0)
+    {
+      pthread_mutex_unlock(&kmm_lock);
+      return -1;
+    }
+
+    // B5: Lay vung vua mo rong de cap cho request hien tai
+    if (get_free_vmrg_area_mm(kmm, vmaid, size, &alloc_rg) < 0)
+    {
+      pthread_mutex_unlock(&kmm_lock);
+      return -1;
+    }
+  }
+
+  // B6: Luu vung da cap vao Kernel symbol table va tra dia chi ao
+  symrg->rg_start = alloc_rg.rg_start;
+  symrg->rg_end = alloc_rg.rg_end;
+  *alloc_addr = alloc_rg.rg_start;
+
+  pthread_mutex_unlock(&kmm_lock);
   return 0;
-
 }
-
 
 
 /*libmem_dma_memcpy - DMA memcpy
@@ -653,6 +870,24 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
   //__read_user_mem(...)
   //__write_kernel_mem(...);
 
+  // B1: Kiem tra hai region va toan bo khoang copy truoc khi ghi du lieu
+  if (caller == NULL || caller->mm == NULL || caller->krnl == NULL ||
+      caller->krnl->mm == NULL || size == 0)
+    return -1;
+
+  if (validate_mem_region(caller->mm, 0, (int)source, offset, size) < 0 ||
+      validate_mem_region(caller->krnl->mm, 0, (int)destination, offset, size) < 0)
+    return -1;
+
+  // B2: Copy tung byte tu User MM sang Kernel MM
+  for (uint32_t i = 0; i < size; i++)
+  {
+    BYTE data;
+    if (__read_user_mem(caller, 0, (int)source, offset + i, &data) < 0 ||
+        __write_kernel_mem(caller, 0, (int)destination, offset + i, data) < 0)
+      return -1;
+  }
+
   return 0;
 }
 
@@ -666,7 +901,25 @@ int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destina
   //__read_kernel_mem(...)
   //__write_user_mem(...);
 
-  return 1;
+  // B1: Kiem tra hai region va toan bo khoang copy truoc khi ghi du lieu
+  if (caller == NULL || caller->mm == NULL || caller->krnl == NULL ||
+      caller->krnl->mm == NULL || size == 0)
+    return -1;
+
+  if (validate_mem_region(caller->krnl->mm, 0, (int)source, offset, size) < 0 ||
+      validate_mem_region(caller->mm, 0, (int)destination, offset, size) < 0)
+    return -1;
+
+  // B2: Copy tung byte tu Kernel MM sang User MM
+  for (uint32_t i = 0; i < size; i++)
+  {
+    BYTE data;
+    if (__read_kernel_mem(caller, 0, (int)source, offset + i, &data) < 0 ||
+        __write_user_mem(caller, 0, (int)destination, offset + i, data) < 0)
+      return -1;
+  }
+
+  return 0;
 }
 
 
@@ -682,7 +935,28 @@ int __read_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, 
   /* TODO: provide OS memory operator for kernel memory region */
   //krnl->krnl_pgd ... or krnl->pgd ... based on kmem implementation strategy
 
-  return 0;
+  // B1: Kiem tra Kernel MM va con tro du lieu
+  if (caller == NULL || caller->krnl == NULL || caller->krnl->mm == NULL || data == NULL)
+    return -1;
+
+  pthread_mutex_lock(&kmm_lock);
+  struct mm_struct *kmm = caller->krnl->mm;
+  struct vm_rg_struct *region = get_symrg_byid(kmm, rgid);
+  struct vm_area_struct *vma = get_vma_by_num(kmm, vmaid);
+
+  // B2: Xac nhan region da cap phat va offset nam trong bien
+  if (region == NULL || vma == NULL ||
+      (region->rg_start == 0 && region->rg_end == 0) ||
+      region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
+  {
+    pthread_mutex_unlock(&kmm_lock);
+    return -1;
+  }
+
+  // B3: Doc byte tu Kernel page table
+  int ret = pg_getval(kmm, (int)(region->rg_start + offset), data, caller);
+  pthread_mutex_unlock(&kmm_lock);
+  return ret;
 }
 
 /*__write_kernel_mem - write a kernel region memory
@@ -697,8 +971,30 @@ int __write_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset,
   /* TODO: provide OS memory operator for kernel memory region */
   //krnl->krnl_pgd ... or krnl->pgd ... based on kmem implementation strategy
 
-  return 0;
+  // B1: Kiem tra Kernel MM
+  if (caller == NULL || caller->krnl == NULL || caller->krnl->mm == NULL)
+    return -1;
+
+  pthread_mutex_lock(&kmm_lock);
+  struct mm_struct *kmm = caller->krnl->mm;
+  struct vm_rg_struct *region = get_symrg_byid(kmm, rgid);
+  struct vm_area_struct *vma = get_vma_by_num(kmm, vmaid);
+
+  // B2: Xac nhan region da cap phat va offset hop le
+  if (region == NULL || vma == NULL ||
+      (region->rg_start == 0 && region->rg_end == 0) ||
+      region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
+  {
+    pthread_mutex_unlock(&kmm_lock);
+    return -1;
+  }
+
+  // B3: Ghi byte vao Kernel page table
+  int ret = pg_setval(kmm, (int)(region->rg_start + offset), value, caller);
+  pthread_mutex_unlock(&kmm_lock);
+  return ret;
 }
+
 
 /*__read_user_mem - read value in user region memory
  *@caller: caller
@@ -712,7 +1008,27 @@ int __read_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BY
   /* TODO: provide OS level management user memory access */
   //krnl->pgd ... or krnl->krnl_pgd  ... based on kmem implementation strategy
 
-   return 0;
+  // B1: Kiem tra User MM va con tro du lieu
+  if (caller == NULL || caller->mm == NULL || data == NULL)
+    return -1;
+
+  pthread_mutex_lock(&mmvm_lock);
+  struct vm_rg_struct *region = get_symrg_byid(caller->mm, rgid);
+  struct vm_area_struct *vma = get_vma_by_num(caller->mm, vmaid);
+
+  // B2: Xac nhan region da cap phat va offset nam trong bien
+  if (region == NULL || vma == NULL ||
+      (region->rg_start == 0 && region->rg_end == 0) ||
+      region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
+  {
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
+
+  // B3: Doc byte tu User page table
+  int ret = pg_getval(caller->mm, (int)(region->rg_start + offset), data, caller);
+  pthread_mutex_unlock(&mmvm_lock);
+  return ret;
 }
 
 
@@ -728,7 +1044,27 @@ int __write_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, B
   /* TODO: provide OS level management user memory access */
   //krnl->pgd ... or krnl->krnl_pgd  ... based on kmem implementation strategy
 
-  return 0;
+  // B1: Kiem tra User MM
+  if (caller == NULL || caller->mm == NULL)
+    return -1;
+
+  pthread_mutex_lock(&mmvm_lock);
+  struct vm_rg_struct *region = get_symrg_byid(caller->mm, rgid);
+  struct vm_area_struct *vma = get_vma_by_num(caller->mm, vmaid);
+
+  // B2: Xac nhan region da cap phat va offset hop le
+  if (region == NULL || vma == NULL ||
+      (region->rg_start == 0 && region->rg_end == 0) ||
+      region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
+  {
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
+
+  // B3: Ghi byte vao User page table
+  int ret = pg_setval(caller->mm, (int)(region->rg_start + offset), value, caller);
+  pthread_mutex_unlock(&mmvm_lock);
+  return ret;
 }
 
 
