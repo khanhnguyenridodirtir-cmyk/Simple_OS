@@ -79,7 +79,7 @@ int __sys_memmap(struct krnl_t *krnl, uint32_t pid, struct sc_regs* regs)
             ret = MEMPHY_write(krnl->mram, regs->a2, regs->a3);
             break;
    default:
-            printf("Memop code: %d\n", memop);
+            printf("Memop code: %ld\n", memop);
             ret=-1;
             break;
    }
