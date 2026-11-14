@@ -100,6 +100,9 @@ int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, a
 /*inc_vma_limit - increase vm area limits to reserve space for new variable */
 int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
 {
+  if(caller==NULL) return -1;
+
+  // B1 lay vung khu vuc nho truoc de biet dang mo rong cho ai
   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
   if (!cur_vma) return -1;
   
@@ -108,6 +111,8 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
 #ifdef MM64
   addr_t num_pages = (alignedsz + PAGING64_PAGESZ - 1) / PAGING64_PAGESZ;
   alignedsz = num_pages * PAGING64_PAGESZ;
+addr_t num_pages = (alignedsz + PAGING_PAGESZ - 1) / PAGING_PAGESZ;
+  alignedsz = num_pages * PAGING_PAGESZ;
 #endif
 
   addr_t vmastart = cur_vma->sbrk;
