@@ -107,11 +107,14 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
   if (!cur_vma) return -1;
   
   /* Căn chỉnh kích thước trang */
-  addr_t alignedsz = inc_sz; 
+  addr_t alignedsz = inc_sz;
+  addr_t num_pages = 0;
+
 #ifdef MM64
-  addr_t num_pages = (alignedsz + PAGING64_PAGESZ - 1) / PAGING64_PAGESZ;
+  num_pages = (alignedsz + PAGING64_PAGESZ - 1) / PAGING64_PAGESZ;
   alignedsz = num_pages * PAGING64_PAGESZ;
-addr_t num_pages = (alignedsz + PAGING_PAGESZ - 1) / PAGING_PAGESZ;
+#else
+  num_pages = (alignedsz + PAGING_PAGESZ - 1) / PAGING_PAGESZ;
   alignedsz = num_pages * PAGING_PAGESZ;
 #endif
 
@@ -123,6 +126,10 @@ addr_t num_pages = (alignedsz + PAGING_PAGESZ - 1) / PAGING_PAGESZ;
 
   /* Lấy node bộ nhớ ảo mới */
   struct vm_rg_struct *newrg = get_vm_area_node_at_brk(caller, vmaid, alignedsz);
+
+  if(newrg==NULL){
+    return -1;
+  }
 
   /* Yêu cầu ánh xạ phần bộ nhớ ảo này xuống RAM thực */
   if (vm_map_ram(caller, cur_vma->vm_start, cur_vma->vm_end, newrg->rg_start, num_pages, newrg) < 0) {
