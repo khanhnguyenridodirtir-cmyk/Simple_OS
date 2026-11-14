@@ -66,7 +66,10 @@ int __sys_memmap(struct krnl_t *krnl, uint32_t pid, struct sc_regs* regs)
             ret= inc_vma_limit(caller, regs->a2, regs->a3);
             break;
    case SYSMEM_SWP_OP:
-            ret = __mm_swap_page(caller, regs->a2, regs->a3);
+            if (regs->a4 == 0)
+                __mm_swap_page(caller, regs->a2, regs->a3); // RAM -> SWAP
+            else
+                __swap_cp_page(krnl->active_mswp, regs->a3, krnl->mram, regs->a2); // SWAP -> RAM
             break;
    case SYSMEM_IO_READ:
             ret= MEMPHY_read(krnl->mram, regs->a2, &value);

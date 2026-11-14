@@ -172,6 +172,8 @@ int MEMPHY_read(struct memphy_struct * mp, addr_t addr, BYTE *value);
 int MEMPHY_write(struct memphy_struct * mp, addr_t addr, BYTE data);
 int MEMPHY_dump(struct memphy_struct * mp);
 int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg);
+// ham them
+//
 int MEMPHY_destroy(struct memphy_struct *mp);
 
 /* print list */
