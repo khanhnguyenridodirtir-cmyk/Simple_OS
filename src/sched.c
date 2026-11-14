@@ -14,7 +14,8 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-//#define SCHED_DBG 1
+#include "timer.h"
+#define SCHED_DBG 1
 
 static struct queue_t ready_queue;
 static struct queue_t run_queue;
@@ -61,8 +62,8 @@ void finish_proc(struct pcb_t * proc) {
 	pthread_mutex_lock(&queue_lock);
 	purgequeue(&running_list, proc);
 #ifdef SCHED_DBG
-	printf("\t[LOCK] PID %d xong, running_list con %d\n",
-		proc->pid, running_list.size);
+	printf("\t[LOCK] t=%d PID %d xong, running_list con %d\n",
+		(int)current_time(), proc->pid, running_list.size);
 #endif
 	pthread_mutex_unlock(&queue_lock);
 }
@@ -110,8 +111,8 @@ struct pcb_t * get_mlq_proc(void) {
 		proc = dequeue(&mlq_ready_queue[q]);
 		slot[q]--;
 #ifdef SCHED_DBG
-		printf("\t[MLQ] Lay PID %d tu queue %d, slot con lai %d\n",
-			proc->pid, q, slot[q]);
+		printf("\t[MLQ] t=%d Lay PID %d tu queue %d, slot con lai %d\n",
+			(int)current_time(), proc->pid, q, slot[q]);
 #endif
 	}
 
@@ -137,8 +138,8 @@ void put_mlq_proc(struct pcb_t * proc) {
 	purgequeue(&running_list, proc);
 	enqueue(&mlq_ready_queue[proc->prio], proc);
 #ifdef SCHED_DBG
-	printf("\t[LOCK] Put PID %d ve queue %d, running_list con %d\n",
-		proc->pid, proc->prio, running_list.size);
+	printf("\t[LOCK] t=%d Put PID %d ve queue %d, running_list con %d\n",
+		(int)current_time(), proc->pid, proc->prio, running_list.size);
 #endif
 	pthread_mutex_unlock(&queue_lock);
 }
@@ -157,6 +158,10 @@ void add_mlq_proc(struct pcb_t * proc) {
 		proc->prio = MAX_PRIO - 1;
        
 	enqueue(&mlq_ready_queue[proc->prio], proc);
+#ifdef SCHED_DBG
+	printf("\t[MLQ] t=%d Them PID %d vao queue %d\n",
+		(int)current_time(), proc->pid, proc->prio);
+#endif
 	pthread_mutex_unlock(&queue_lock);
 }
 

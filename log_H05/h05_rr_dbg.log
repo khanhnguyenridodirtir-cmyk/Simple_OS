@@ -1,0 +1,50 @@
+Time slot   0
+ld_routine
+	Loaded a process at input/proc/h05_5, PID: 1 PRIO: 1
+	[MLQ] t=0 Them PID 1 vao queue 1
+Time slot   1
+	[MLQ] t=1 Lay PID 1 tu queue 1, slot con lai 138
+	CPU 0: Dispatched process  1
+Initialized dma_rtl simulation
+	Loaded a process at input/proc/h05_4, PID: 2 PRIO: 1
+	[MLQ] t=1 Them PID 2 vao queue 1
+Time slot   2
+	Loaded a process at input/proc/h05_6, PID: 3 PRIO: 1
+	[MLQ] t=2 Them PID 3 vao queue 1
+Time slot   3
+Time slot   4
+	CPU 0: Put process  1 to run queue
+	[LOCK] t=4 Put PID 1 ve queue 1, running_list con 0
+	[MLQ] t=4 Lay PID 2 tu queue 1, slot con lai 137
+	CPU 0: Dispatched process  2
+Time slot   5
+Time slot   6
+Time slot   7
+	CPU 0: Put process  2 to run queue
+	[LOCK] t=7 Put PID 2 ve queue 1, running_list con 0
+	[MLQ] t=7 Lay PID 3 tu queue 1, slot con lai 136
+	CPU 0: Dispatched process  3
+Time slot   8
+Time slot   9
+Time slot  10
+	CPU 0: Put process  3 to run queue
+	[LOCK] t=10 Put PID 3 ve queue 1, running_list con 0
+	[MLQ] t=10 Lay PID 1 tu queue 1, slot con lai 135
+	CPU 0: Dispatched process  1
+Time slot  11
+Time slot  12
+	CPU 0: Processed  1 has finished
+	[LOCK] t=12 PID 1 xong, running_list con 0
+	[MLQ] t=12 Lay PID 2 tu queue 1, slot con lai 134
+	CPU 0: Dispatched process  2
+Time slot  13
+	CPU 0: Processed  2 has finished
+	[LOCK] t=13 PID 2 xong, running_list con 0
+	[MLQ] t=13 Lay PID 3 tu queue 1, slot con lai 133
+	CPU 0: Dispatched process  3
+Time slot  14
+Time slot  15
+Time slot  16
+	CPU 0: Processed  3 has finished
+	[LOCK] t=16 PID 3 xong, running_list con 0
+	CPU 0 stopped
