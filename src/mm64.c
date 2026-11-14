@@ -236,7 +236,67 @@ addr_t vm_map_ram(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t mapst
 
   return 0;
 }
+/*
+ * vm_map_kernel - map kernel virtual pages to RAM without SWAP/FIFO
+ */
+addr_t vm_map_kernel(struct pcb_t *caller, addr_t astart, addr_t aend,
+                     addr_t mapstart, int incpgnum, struct vm_rg_struct *ret_rg)
+{
+  // B1: Kiem tra Kernel MM, RAM va tham so mapping
+  if (caller == NULL || caller->krnl == NULL || caller->krnl->mm == NULL ||
+      caller->krnl->mram == NULL || ret_rg == NULL || incpgnum <= 0 ||
+      mapstart % PAGING64_PAGESZ != 0)
+    return -1;
 
+  struct mm_struct *kmm = caller->krnl->mm;
+  addr_t first_pgn = mapstart >> PAGING64_ADDR_PT_SHIFT;
+  if (kmm->pgd == NULL || first_pgn + (addr_t)incpgnum > PAGING_MAX_PGN)
+    return -1;
+
+  // B2: Cap phat truoc tat ca frame RAM; neu thieu thi rollback
+  addr_t *fpns = malloc((size_t)incpgnum * sizeof(addr_t));
+  if (fpns == NULL)
+    return -1;
+
+  int allocated = 0;
+  for (; allocated < incpgnum; allocated++)
+  {
+    if (MEMPHY_get_freefp(caller->krnl->mram, &fpns[allocated]) < 0)
+      break;
+  }
+
+  if (allocated != incpgnum)
+  {
+    // B2.1: Tra lai cac frame da lay neu khong du RAM cho Kernel
+    for (int i = 0; i < allocated; i++)
+      MEMPHY_put_freefp(caller->krnl->mram, fpns[i]);
+    free(fpns);
+    return -1;
+  }
+
+  // B3: Map tung frame vao Kernel page table, khong dua vao FIFO User
+  for (int i = 0; i < incpgnum; i++)
+  {
+    addr_t pgn = first_pgn + (addr_t)i;
+    if (pte_set_fpn(kmm, pgn, fpns[i], caller) < 0)
+    {
+      // B3.1: Rollback PTE va frame neu mapping gap loi
+      for (int j = 0; j < i; j++)
+        pte_set_entry(kmm, first_pgn + (addr_t)j, 0, caller);
+      for (int j = 0; j < incpgnum; j++)
+        MEMPHY_put_freefp(caller->krnl->mram, fpns[j]);
+      free(fpns);
+      return -1;
+    }
+  }
+
+  // B4: Tra ve vung dia chi ao da duoc map
+  ret_rg->rg_start = mapstart;
+  ret_rg->rg_end = mapstart + (addr_t)incpgnum * PAGING64_PAGESZ;
+  ret_rg->rg_next = NULL;
+  free(fpns);
+  return 0;
+}
 /* Swap copy content page from source frame to destination frame */
 int __swap_cp_page(struct memphy_struct *mpsrc, addr_t srcfpn,
                    struct memphy_struct *mpdst, addr_t dstfpn)
