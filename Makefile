@@ -93,8 +93,9 @@ test_memphy: test/test_memphy.c src/mm-memphy.c
 test_mm64: test/test_mm64.c src/mm64.c src/mm-memphy.c
 	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
 
-test_libmem: test/test_libmem.c test/test_mm_support.c src/libmem.c src/mm64.c src/mm-memphy.c
+test_libmem: test/test_libmem.c src/libmem.c src/mm64.c src/mm-memphy.c src/syscall.c src/sys_mem.c src/sys_listsyscall.c src/mm-vm.c
 	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+
 
 test_integration_mem: test/test_integration_mem.c test/test_mm_support.c src/libmem.c src/mm64.c src/mm-memphy.c
 	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
