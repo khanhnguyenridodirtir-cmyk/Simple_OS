@@ -1143,30 +1143,54 @@ int free_pcb_memph(struct pcb_t *caller)
  *@pgn: return page number
  *
  */
+/*find_victim_page - find victim page
+ *@caller: caller
+ *@pgn: return page number
+ *
+ */
 int find_victim_page(struct mm_struct *mm, addr_t *retpgn)
 {
-  struct pgn_t *pg = mm->fifo_pgn;
-
-  /* TODO: Implement the theorical mechanism to find the victim page */
-  if (!pg)
+  // B1 : Kiem tra dau vao va danh sach fifo_pgn
+  if (mm == NULL || retpgn == NULL || mm->fifo_pgn == NULL)
   {
     return -1;
   }
+
+  /* TODO: Implement the theorical mechanism to find the victim page */
+  // B2 : Duyet tim trang cu nhat (nam gan cuoi danh sach nhat) dang PRESENT trong RAM
+  struct pgn_t *curr = mm->fifo_pgn;
   struct pgn_t *prev = NULL;
-  while (pg->pg_next)
+  struct pgn_t *vic = NULL;
+  struct pgn_t *vic_prev = NULL;
+
+  while (curr != NULL)
   {
-    prev = pg;
-    pg = pg->pg_next;
-  }
-  *retpgn = pg->pgn;
-  
-  if (prev) {
-     prev->pg_next = NULL;
-  } else {
-     mm->fifo_pgn = NULL;
+    addr_t pte = pte_get_entry(mm, curr->pgn, NULL);
+    if (PAGING_PAGE_PRESENT(pte))
+    {
+      vic = curr;
+      vic_prev = prev;
+    }
+    prev = curr;
+    curr = curr->pg_next;
   }
 
-  free(pg);
+  // B3 : Neu khong co trang nao dang PRESENT trong RAM thi tra ve -1
+  if (vic == NULL)
+  {
+    return -1;
+  }
+
+  // B4 : Lay so hieu trang nan nhan va go node khoi danh sach fifo_pgn
+  *retpgn = vic->pgn;
+
+  if (vic_prev != NULL) {
+    vic_prev->pg_next = vic->pg_next;
+  } else {
+    mm->fifo_pgn = vic->pg_next;
+  }
+
+  free(vic);
 
   return 0;
 }

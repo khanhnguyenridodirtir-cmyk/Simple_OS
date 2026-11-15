@@ -61,5 +61,16 @@
 #define PAGING64_ADDR_P4D_MASK  GENMASK64(PAGING64_ADDR_P4D_HIBIT,PAGING64_ADDR_P4D_LOBIT)
 #define PAGING64_ADDR_PGD_MASK  GENMASK64(PAGING64_ADDR_PGD_HIBIT,PAGING64_ADDR_PGD_LOBIT)
 
+/* 
+ * Sua loi mat na offset cho che do 64-bit (trang 4KB = 4096 bytes -> can 12 bit offset tu bit 0 den 11).
+ * Ly do: Cac macro PAGING64_ADDR_OFFST_MASK va PAGING64_ADDR_OFFST o tren dang dung nham
+ * hang so PAGING_ADDR_OFFST_HIBIT (7 - cua che do 32-bit, chi lay 8 bit = 256 bytes),
+ * dan den dia chi co offset >= 256 bi cat cut sai lech.
+ * Dung #undef de go bo dinh nghia cu ma khong xoa code goc va tranh canh bao redefined cua GCC.
+ */
+#undef PAGING64_ADDR_OFFST_MASK
+#undef PAGING64_ADDR_OFFST
+#define PAGING64_ADDR_OFFST_MASK  GENMASK64(PAGING64_ADDR_OFFST_HIBIT, PAGING64_ADDR_OFFST_LOBIT)
+#define PAGING64_ADDR_OFFST(addr) GETVAL(addr, PAGING64_ADDR_OFFST_MASK, PAGING64_ADDR_OFFST_LOBIT)
 
 #endif

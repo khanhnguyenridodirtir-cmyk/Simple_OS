@@ -91,18 +91,19 @@ test_mem: $(OBJ) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o
 test_memphy: test/test_memphy.c test/test_helpers.c src/mm-memphy.c test/test_helpers.h
 	$(CC) $(INC) -Itest -std=gnu11 -Wall -Wextra $(DEBUG) test/test_memphy.c test/test_helpers.c src/mm-memphy.c -o $@ $(LIB)
 
-test_mm64: test/test_mm64.c src/mm64.c src/mm-memphy.c
-	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+test_mm64: test/test_mm64.c test/test_helpers.c src/mm64.c src/mm-memphy.c src/mm-vm.c src/libmem.c src/syscall.c src/sys_mem.c src/sys_listsyscall.c
+	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
 
-test_libmem: test/test_libmem.c src/libmem.c src/mm64.c src/mm-memphy.c src/syscall.c src/sys_mem.c src/sys_listsyscall.c src/mm-vm.c
-	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+test_libmem: test/test_libmem.c test/test_helpers.c src/libmem.c src/mm64.c src/mm-memphy.c src/sys_mem.c src/mm-vm.c
+	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+	
+test_syscall17: test/test_syscall17.c test/test_helpers.c src/sys_mem.c src/libstd.c src/libmem.c src/mm64.c src/mm-memphy.c src/mm-vm.c
+	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+test_integration_mem: test/test_integration_mem.c test/test_helpers.c src/sys_mem.c src/libstd.c src/libmem.c src/mm64.c src/mm-memphy.c src/mm-vm.c
+	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
 
-
-test_integration_mem: test/test_integration_mem.c test/test_mm_support.c src/libmem.c src/mm64.c src/mm-memphy.c
-	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
-
-test: test_memphy test_mm64 test_libmem test_integration_mem
-	@status=0; for suite in test_memphy test_mm64 test_libmem test_integration_mem; do ./$$suite || status=1; done; exit $$status
+test_all: test_memphy test_mm64 test_libmem test_syscall17 test_integration_mem
+	./test_memphy && ./test_mm64 && ./test_libmem && ./test_syscall17 && ./test_integration_mem
 	
 # Just compile memory management modules
 mem: $(MEM_OBJ)

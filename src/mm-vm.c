@@ -135,11 +135,20 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
 
   /* Cấp khung vật lý và ánh xạ PTE ngay khi mở rộng vùng nhớ */
   struct vm_rg_struct ret_rg;
-  if (vm_map_ram(caller, cur_vma->vm_start, cur_vma->vm_end, old_sbrk, incpgnum, &ret_rg) < 0)
+if (vm_map_ram(caller, cur_vma->vm_start, cur_vma->vm_end, old_sbrk, incpgnum, &ret_rg) == (addr_t)-1)
+  {
+    cur_vma->vm_end = old_sbrk;
     return -1;
+  }
 
   /* Update sbrk */
-  cur_vma->sbrk = new_sbrk;
+ cur_vma->sbrk = new_sbrk;
+  if (new_sbrk / PAGING64_PAGESZ > 512)
+  return -1;
+  struct vm_rg_struct *new_freerg = init_vm_rg(old_sbrk, new_sbrk);
+  if (new_freerg == NULL)
+    return -1;
+  enlist_vm_rg_node(&cur_vma->vm_freerg_list, new_freerg);
 
   return 0;
 }

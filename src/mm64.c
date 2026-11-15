@@ -24,7 +24,7 @@
 #ifndef PAGING64_PGB_SZ
 #define PAGING64_PGB_SZ 512
 #endif
-
+#define PENDING_SWP_FLAG (1ULL << 63)
 /*
  * init_pte - Initialize PTE entry
  */
@@ -197,12 +197,12 @@ int vmap_pgd_memset(struct pcb_t *caller,           // process call
 /*
  * vmap_page_range - map a range of page at aligned address
  */
-addr_t vmap_page_range(struct pcb_t *caller,           // process call
-                    addr_t addr,                       // start address which is aligned to pagesz // start
-                    int pgnum,                      // num of mapping page
-                    struct framephy_struct *frames, // list of the mapped frames
-                    struct vm_rg_struct *ret_rg)    // return mapped region, the real mapped fp
-{                                                   // no guarantee all given pages are mapped
+addr_t vmap_page_range(struct pcb_t *caller,
+                    addr_t addr,
+                    int pgnum,
+                    struct framephy_struct *frames,
+                    struct vm_rg_struct *ret_rg)
+{
   struct framephy_struct *fpit = frames;
   int pgit = 0;
   addr_t pgn = addr >> PAGING64_ADDR_PT_SHIFT;
@@ -214,14 +214,22 @@ addr_t vmap_page_range(struct pcb_t *caller,           // process call
     ret_rg->rg_next = NULL;
   }
 
+  // B1 : Anh xa tung trang vao PTE va ghi nhan vao danh sach quan ly trang fifo_pgn
   for (pgit = 0; pgit < pgnum && fpit != NULL; pgit++) {
     if (fpit->fpn == (addr_t)-1) {
-      /* Trường hợp 0 khung RAM (test 1K): trang đã được cấp sẵn trên SWAP */
+      // B1.1 : Truong hop RAM < 4KB (test 1K) -> xin frame SWAP va dua vao fifo_pgn
       addr_t swpfpn = 0;
       if (MEMPHY_get_freefp(caller->krnl->active_mswp, &swpfpn) == 0) {
         pte_set_swap(caller, pgn + pgit, 0, swpfpn);
+        enlist_pgn_node(&mm->fifo_pgn, pgn + pgit);
       }
+    } else if (fpit->fpn & PENDING_SWP_FLAG) {
+      // B1.2 : Trang da duoc alloc_pages_range day san ra SWAP -> gan PTE SWAP va dua vao fifo_pgn
+      addr_t swpfpn = fpit->fpn & ~PENDING_SWP_FLAG;
+      pte_set_swap(caller, pgn + pgit, 0, swpfpn);
+      enlist_pgn_node(&mm->fifo_pgn, pgn + pgit);
     } else {
+      // B1.3 : Trang nam tren RAM -> gan FPN va dua vao fifo_pgn
       pte_set_fpn(mm, pgn + pgit, fpit->fpn, caller);
       enlist_pgn_node(&mm->fifo_pgn, pgn + pgit);
     }
@@ -248,17 +256,21 @@ addr_t alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_st
   struct memphy_struct *mram = caller->krnl->mram;
   struct memphy_struct *mswp = caller->krnl->active_mswp;
   
+  // B1 : Duyet qua tung trang can cap phat trong req_pgnum
   for (pgit = 0; pgit < req_pgnum; pgit++)
   {
     fpn = 0;
+    // B2 : Uu tien xin frame trong truc tiep tu RAM
     if (MEMPHY_get_freefp(mram, &fpn) != 0)
     {
       addr_t vicpgn = 0, swpfpn = 0;
       struct pcb_t *vic_proc = caller;
 
+      // B3 : Neu het RAM, tim trang nan nhan (victim) trong FIFO cua tien trinh hien tai
       /* 1. Tìm trang nạn nhân trong chính tiến trình gọi */
       if (find_victim_page(mm, &vicpgn) < 0)
       {
+        // B3.1 : Tim victim o cac tien trinh khac trong running_list
         /* 2. Tìm trang nạn nhân ở các tiến trình khác đang chạy (Global Replacement) */
         vic_proc = NULL;
         if (caller->krnl && caller->krnl->running_list) {
@@ -274,11 +286,13 @@ addr_t alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_st
 
       if (vic_proc != NULL)
       {
+        // B4 : Day trang victim da map tu RAM sang SWAP de lay lai vicfpn
         addr_t vicpte = pte_get_entry(vic_proc->mm, vicpgn, vic_proc);
         addr_t vicfpn = PAGING_FPN(vicpte);
 
-        if (MEMPHY_get_freefp(mswp, &swpfpn) != 0)
+        if (mswp == NULL || MEMPHY_get_freefp(mswp, &swpfpn) != 0)
         {
+          enlist_pgn_node(&vic_proc->mm->fifo_pgn, vicpgn);
           *frm_lst = head;
           return -3000;
         }
@@ -287,19 +301,47 @@ addr_t alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_st
         pte_set_swap(vic_proc, vicpgn, 0, swpfpn);
         fpn = vicfpn;
       }
-      else if (mram->maxsz < PAGING64_PAGESZ)
-      {
-        /* 3. RAM vật lý nhỏ hơn 1 trang (test 1K): đánh dấu cấp thẳng trên SWAP */
-        fpn = (addr_t)-1;
-      }
       else
       {
-        *frm_lst = head;
-        return -3000;
+        // B5 : Truong hop cac trang vua xin o vong truoc chua map vao PTE -> day bot 1 frame trong head ra SWAP
+        struct framephy_struct *pending_vic = head;
+        while (pending_vic != NULL &&
+               (pending_vic->fpn == (addr_t)-1 || (pending_vic->fpn & PENDING_SWP_FLAG)))
+        {
+          pending_vic = pending_vic->fp_next;
+        }
+
+        if (pending_vic != NULL && mswp != NULL && MEMPHY_get_freefp(mswp, &swpfpn) == 0)
+        {
+          // B5.1 : Chuyen frame dau tien trong head sang SWAP va giu cho swpfpn (khong tra lai free list)
+          __swap_cp_page(mram, pending_vic->fpn, mswp, swpfpn);
+          fpn = pending_vic->fpn;
+          pending_vic->fpn = PENDING_SWP_FLAG | swpfpn;
+        }
+        else if (mram->maxsz < PAGING64_PAGESZ)
+        {
+          // B5.2 : RAM vat ly nho hon 1 trang (test 1K): danh dau cap thang tren SWAP
+          /* 3. RAM vật lý nhỏ hơn 1 trang (test 1K): đánh dấu cấp thẳng trên SWAP */
+          fpn = (addr_t)-1;
+        }
+        else
+        {
+          // B5.3 : Het ca RAM lan SWAP -> bao loi de vm_map_ram rollback
+          *frm_lst = head;
+          return -3000;
+        }
       }
     }
 
+    // B6 : Tao node frame moi va noi vao danh sach ket qua frm_lst
     struct framephy_struct *newfp = malloc(sizeof(struct framephy_struct));
+    if (newfp == NULL)
+    {
+      if (fpn != (addr_t)-1 && !(fpn & PENDING_SWP_FLAG))
+        MEMPHY_put_freefp(mram, fpn);
+      *frm_lst = head;
+      return -3000;
+    }
     newfp->fpn = fpn;
     newfp->fp_next = NULL;
 
@@ -312,10 +354,10 @@ addr_t alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_st
     }
   }
 
+  // B7 : Tra danh sach frame da cap phat ve cho vm_map_ram
   *frm_lst = head;
   return 0;
 }
-
 /*
  * vm_map_ram - do the mapping all vm are to ram storage device
  */
