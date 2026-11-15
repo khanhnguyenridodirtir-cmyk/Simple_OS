@@ -7,6 +7,11 @@ hk261
 *.a
 *.so
 *.out
-
+*.obj
 # Cac file thuc thi sinh ra khi chay make
 
+
+*.o
+*.obj
+obj/
+build/
