@@ -320,8 +320,9 @@ int main(int argc, char * argv[]) {
 	for (i = 0; i < num_cpus; i++) {
 		pthread_join(cpu[i], NULL);
 	}
-	pthread_join(ld, NULL);
-
+	pthread_join(ld, NULL); 
+	// them MEMPHY_destroy de xoa 
+	MEMPHY_destroy(&mram);
 	/* Stop timer */
 	stop_timer();
 

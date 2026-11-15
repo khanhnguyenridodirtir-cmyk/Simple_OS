@@ -11,12 +11,15 @@ LIB = -lpthread
 SRC = src
 OBJ = obj
 INCLUDE = include
+TEST = test    # Thêm biến chỉ thư mục test
 
 CC = gcc
 CXX = g++
 DEBUG = -g
 CFLAGS = -Wall -c $(DEBUG)
 LFLAGS = -Wall $(DEBUG)
+
+vpath %.c $(SRC) $(TEST)    # Bổ sung $(TEST) vào vpath để Make tự tìm file .c trong thư mục test/
 
 vpath %.c $(SRC)
 vpath %.cpp $(SRC)
@@ -80,7 +83,26 @@ HEADER = $(wildcard $(INCLUDE)/*.h)
   
 all: os
 #mem sched os
+# Target dùng để test riêng phân hệ Bộ nhớ vật lý (test/test_mm_memphy.c)
+test_mem: $(OBJ) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o
+	$(CXX) $(LFLAGS) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o -o test_mem $(LIB)
 
+test_memphy: test/test_memphy.c src/mm-memphy.c
+	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+
+test_mm64: test/test_mm64.c src/mm64.c src/mm-memphy.c
+	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+
+test_libmem: test/test_libmem.c src/libmem.c src/mm64.c src/mm-memphy.c src/syscall.c src/sys_mem.c src/sys_listsyscall.c src/mm-vm.c
+	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+
+
+test_integration_mem: test/test_integration_mem.c test/test_mm_support.c src/libmem.c src/mm64.c src/mm-memphy.c
+	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+
+test: test_memphy test_mm64 test_libmem test_integration_mem
+	@status=0; for suite in test_memphy test_mm64 test_libmem test_integration_mem; do ./$$suite || status=1; done; exit $$status
+	
 # Just compile memory management modules
 mem: $(MEM_OBJ)
 	$(MAKE) $(LFLAGS) $(MEM_OBJ) -o mem $(LIB)
@@ -133,5 +155,7 @@ $(OBJ):
 
 clean:
 	rm -f $(SRC)/*.lst
-	rm -f $(OBJ)/*.o os sched mem pdg dma_testbench *.vcd
+	rm -f $(OBJ)/*.o os sched mem pdg dma_testbench test_memphy test_mm64 test_libmem test_integration_mem *.vcd
 	rm -rf $(OBJ)
+
+.PHONY: test

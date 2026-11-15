@@ -1,3 +1,8 @@
+#if defined(_PTHREAD_H) && !defined(__SCHED_H_FORWARDED)
+#define __SCHED_H_FORWARDED
+#include_next <sched.h>
+#else
+
 #ifndef QUEUE_H
 #define QUEUE_H
 
@@ -29,6 +34,8 @@ void add_proc(struct pcb_t * proc);
 
 #ifdef __cplusplus
 }
+#endif
+
 #endif
 
 #endif
