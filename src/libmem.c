@@ -1097,37 +1097,45 @@ int __write_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, B
  */
 int free_pcb_memph(struct pcb_t *caller)
 {
-   if (caller == NULL || caller->mm == NULL ||
-        caller->mm->pgd == NULL || caller->krnl == NULL ||
-        caller->krnl->mram == NULL)
-        return -1;
+  if (caller == NULL || caller->krnl == NULL)
+    return -1;
+
+  struct mm_struct *mm = (caller->mm != NULL) ? caller->mm : caller->krnl->mm;
+  struct memphy_struct *mram = caller->krnl->mram;
+  struct memphy_struct *mswp = caller->krnl->active_mswp;
+
+  if (mm == NULL || mram == NULL)
+    return -1;
 
   pthread_mutex_lock(&mmvm_lock);
-  int pagenum, fpn;
- 
 
-  for (pagenum = 0; pagenum < PAGING_MAX_PGN; pagenum++)
+  struct pgn_t *pg = mm->fifo_pgn;
+  while (pg != NULL)
   {
-       uint64_t pte = caller->mm->pgd[pagenum];
+    addr_t pte = pte_get_entry(mm, pg->pgn, caller);
 
-        if (PAGING_PAGE_PRESENT(pte))
-        {
-            fpn = PAGING_FPN(pte);
-            MEMPHY_put_freefp(caller->krnl->mram, fpn);
-        }
-        else if (pte & PAGING_PTE_SWAPPED_MASK)
-        {
-            fpn = PAGING_SWP(pte);
-
-            if (caller->krnl->active_mswp != NULL)
-                MEMPHY_put_freefp(caller->krnl->active_mswp, fpn);
-        }
-
-        caller->mm->pgd[pagenum] = 0;
+    if (PAGING_PAGE_PRESENT(pte))
+    {
+      MEMPHY_put_freefp(mram, PAGING_FPN(pte));
+    }
+    else if (pte & PAGING_PTE_SWAPPED_MASK)
+    {
+      if (mswp != NULL)
+        MEMPHY_put_freefp(mswp, PAGING_SWP(pte));
     }
 
-    pthread_mutex_unlock(&mmvm_lock);
-    return 0;
+    /* Xóa entry khỏi bảng trang 64-bit để tránh tái sử dụng nhầm */
+    pte_set_entry(mm, pg->pgn, 0, caller);
+
+    struct pgn_t *tmp = pg;
+    pg = pg->pg_next;
+    free(tmp);
+  }
+
+  mm->fifo_pgn = NULL;
+
+  pthread_mutex_unlock(&mmvm_lock);
+  return 0;
 }
 
 /*find_victim_page - find victim page

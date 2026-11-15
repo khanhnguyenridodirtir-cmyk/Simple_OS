@@ -25,7 +25,7 @@ struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
 {
   struct vm_area_struct *pvma = mm->mmap;
 
-  if (mm->mmap == NULL)
+  if (mm->mmap == NULL || pvma == NULL)
     return NULL;
 
   int vmait = pvma->vm_id;
@@ -51,12 +51,17 @@ int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
 /*get_vm_area_node - get vm area for a number of pages */
 struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, addr_t alignedsz)
 {
-  struct vm_rg_struct * newrg;
-  struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
+  struct vm_rg_struct * newrg = NULL;
+  struct mm_struct *mm = (caller && caller->mm) ? caller->mm : ((caller && caller->krnl) ? caller->krnl->mm : NULL);
+  struct vm_area_struct *cur_vma = get_vma_by_num(mm, vmaid);
+
+  if (cur_vma == NULL)
+    return NULL;
 
   newrg = malloc(sizeof(struct vm_rg_struct));
+  if (newrg == NULL)
+    return NULL;
 
-  /* Start tại điểm ngắt cấp phát hiện tại (sbrk) */
   newrg->rg_start = cur_vma->sbrk;
   newrg->rg_end = cur_vma->sbrk + alignedsz;
   newrg->rg_next = NULL;
@@ -67,7 +72,11 @@ struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, ad
 /*validate_overlap_vm_area */
 int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, addr_t vmaend)
 {
-  struct vm_area_struct *vma = caller->mm->mmap;
+  struct mm_struct *mm = (caller && caller->mm) ? caller->mm : ((caller && caller->krnl) ? caller->krnl->mm : NULL);
+  if (mm == NULL)
+    return -1;
+    
+  struct vm_area_struct *vma = mm->mmap;
 
   if (vmastart >= vmaend)
   {
@@ -79,7 +88,7 @@ int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, a
     return -1;
   }
 
-  struct vm_area_struct *cur_area = get_vma_by_num(caller->mm, vmaid);
+  struct vm_area_struct *cur_area = get_vma_by_num(mm, vmaid);
   if (cur_area == NULL)
   {
     return -1;
@@ -87,7 +96,7 @@ int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, a
 
   while (vma != NULL)
   {
-    if (vma != cur_area && OVERLAP(cur_area->vm_start, cur_area->vm_end, vma->vm_start, vma->vm_end))
+    if (vma != cur_area && OVERLAP(vmastart, vmaend, vma->vm_start, vma->vm_end))
     {
       return -1;
     }
@@ -100,49 +109,37 @@ int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, a
 /*inc_vma_limit - increase vm area limits to reserve space for new variable */
 int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
 {
-  if(caller==NULL) return -1;
-
-  // B1 lay vung khu vuc nho truoc de biet dang mo rong cho ai
-  struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
-  if (!cur_vma) return -1;
-  
-  /* Căn chỉnh kích thước trang */
-  addr_t alignedsz = inc_sz;
-  addr_t num_pages = 0;
-
-#ifdef MM64
-  num_pages = (alignedsz + PAGING64_PAGESZ - 1) / PAGING64_PAGESZ;
-  alignedsz = num_pages * PAGING64_PAGESZ;
-#else
-  num_pages = (alignedsz + PAGING_PAGESZ - 1) / PAGING_PAGESZ;
-  alignedsz = num_pages * PAGING_PAGESZ;
-#endif
-
-  addr_t vmastart = cur_vma->sbrk;
-  addr_t vmaend = vmastart + alignedsz;
-
-  if (validate_overlap_vm_area(caller, vmaid, vmastart, vmaend) < 0)
-     return -1;  //Overlap and failed allocation 
-
-  /* Lấy node bộ nhớ ảo mới */
-  struct vm_rg_struct *newrg = get_vm_area_node_at_brk(caller, vmaid, alignedsz);
-
-  if(newrg==NULL){
+  struct mm_struct *mm = (caller && caller->mm) ? caller->mm : ((caller && caller->krnl) ? caller->krnl->mm : NULL);
+  if (mm == NULL)
     return -1;
+
+  struct vm_area_struct *cur_vma = get_vma_by_num(mm, vmaid);
+  if (cur_vma == NULL)
+    return -1;
+
+  /* Align size to page boundary */
+  addr_t aligned_inc_sz = PAGING64_PAGE_ALIGNSZ(inc_sz);
+  int incpgnum = aligned_inc_sz / PAGING64_PAGESZ;
+  addr_t old_sbrk = cur_vma->sbrk;
+  addr_t new_sbrk = old_sbrk + aligned_inc_sz;
+
+  /* Validate overlap */
+  if (validate_overlap_vm_area(caller, vmaid, old_sbrk, new_sbrk) < 0)
+    return -1;
+
+  /* Expand boundary if needed */
+  if (new_sbrk > cur_vma->vm_end)
+  {
+    cur_vma->vm_end = new_sbrk;
   }
 
-  /* Yêu cầu ánh xạ phần bộ nhớ ảo này xuống RAM thực */
-  if (vm_map_ram(caller, cur_vma->vm_start, cur_vma->vm_end, newrg->rg_start, num_pages, newrg) < 0) {
-      free(newrg);
-      return -1; 
-  }
+  /* Cấp khung vật lý và ánh xạ PTE ngay khi mở rộng vùng nhớ */
+  struct vm_rg_struct ret_rg;
+  if (vm_map_ram(caller, cur_vma->vm_start, cur_vma->vm_end, old_sbrk, incpgnum, &ret_rg) < 0)
+    return -1;
 
-  /* Nới rộng limit (sbrk) */
-  cur_vma->sbrk += alignedsz;
-  cur_vma->vm_end = cur_vma->sbrk;
-  
-  /* Đưa vùng mới cấp vào danh sách rảnh (free region list) để hệ thống quản lý biến */
-  enlist_vm_rg_node(&cur_vma->vm_freerg_list, newrg);
+  /* Update sbrk */
+  cur_vma->sbrk = new_sbrk;
 
   return 0;
 }
