@@ -13,6 +13,9 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include "timer.h"
+#define SCHED_DBG 1
+
 static struct queue_t ready_queue;
 static struct queue_t run_queue;
 static pthread_mutex_t queue_lock;
@@ -24,13 +27,19 @@ static int slot[MAX_PRIO];
 #endif
 
 int queue_empty(void) {
+int res = 1;
+
+pthread_mutex_lock(&queue_lock);	
 #ifdef MLQ_SCHED
 	unsigned long prio;
 	for (prio = 0; prio < MAX_PRIO; prio++)
 		if(!empty(&mlq_ready_queue[prio])) 
-			return -1;
+			res = 0;
 #endif
-	return (empty(&ready_queue) && empty(&run_queue));
+	if (!empty(&ready_queue) || !empty(&run_queue))
+		res = 0;
+	pthread_mutex_unlock(&queue_lock);
+	return res;
 }
 
 void init_scheduler(void) {
@@ -48,6 +57,16 @@ void init_scheduler(void) {
 	pthread_mutex_init(&queue_lock, NULL);
 }
 
+void finish_proc(struct pcb_t * proc) {
+	pthread_mutex_lock(&queue_lock);
+	purgequeue(&running_list, proc);
+#ifdef SCHED_DBG
+	printf("\t[LOCK] t=%d PID %d xong, running_list con %d\n",
+		(int)current_time(), proc->pid, running_list.size);
+#endif
+	pthread_mutex_unlock(&queue_lock);
+}
+
 #ifdef MLQ_SCHED
 /* 
  *  Stateful design for routine calling
@@ -57,18 +76,53 @@ void init_scheduler(void) {
  */
 struct pcb_t * get_mlq_proc(void) {
 	struct pcb_t * proc = NULL;
+	int i;
+	int q = -1;	
 
 	pthread_mutex_lock(&queue_lock);
 	/*TODO: get a process from PRIORITY [ready_queue].
 	 *      It worth to protect by a mechanism.
 	 * */
+	for (i = 0; i < MAX_PRIO; i++) {
+		if (!empty(&mlq_ready_queue[i]) && slot[i] > 0) {
+			q = i;
+			break;
+		}
+	}
+
+	if (q == -1) {
+		for (i = 0; i < MAX_PRIO; i++) {
+			if (!empty(&mlq_ready_queue[i])) {
+				q = i;
+				break;
+			}
+		}
+		if (q != -1) {
+			for (i = 0; i < MAX_PRIO; i++)
+				slot[i] = MAX_PRIO - i;
+#ifdef SCHED_DBG
+			printf("\t[MLQ] Het vong, nap lai slot cho tat ca queue\n");
+#endif
+		}
+	}
+
+	if (q != -1) {
+		proc = dequeue(&mlq_ready_queue[q]);
+		slot[q]--;
+#ifdef SCHED_DBG
+		printf("\t[MLQ] t=%d Lay PID %d tu queue %d, slot con lai %d\n",
+			(int)current_time(), proc->pid, q, slot[q]);
+#endif
+	}
 
 	if (proc != NULL)
 		enqueue(&running_list, proc);
+	pthread_mutex_unlock(&queue_lock);	
 	return proc;	
 }
 
 void put_mlq_proc(struct pcb_t * proc) {
+	pthread_mutex_lock(&queue_lock);
 	proc->krnl->ready_queue = &ready_queue;
 	proc->krnl->mlq_ready_queue = mlq_ready_queue;
 	proc->krnl->running_list = &running_list;
@@ -77,13 +131,20 @@ void put_mlq_proc(struct pcb_t * proc) {
 	 *       It worth to protect by a mechanism.
 	 * 
 	 */
+	if (proc->prio >= MAX_PRIO)
+		proc->prio = MAX_PRIO - 1;
 
-	pthread_mutex_lock(&queue_lock);
+	purgequeue(&running_list, proc);
 	enqueue(&mlq_ready_queue[proc->prio], proc);
+#ifdef SCHED_DBG
+	printf("\t[LOCK] t=%d Put PID %d ve queue %d, running_list con %d\n",
+		(int)current_time(), proc->pid, proc->prio, running_list.size);
+#endif
 	pthread_mutex_unlock(&queue_lock);
 }
 
 void add_mlq_proc(struct pcb_t * proc) {
+	pthread_mutex_lock(&queue_lock);
 	proc->krnl->ready_queue = &ready_queue;
 	proc->krnl->mlq_ready_queue = mlq_ready_queue;
 	proc->krnl->running_list = &running_list;
@@ -92,10 +153,15 @@ void add_mlq_proc(struct pcb_t * proc) {
 	 *       It worth to protect by a mechanism.
 	 * 
 	 */
+		if (proc->prio >= MAX_PRIO)
+		proc->prio = MAX_PRIO - 1;
        
-	pthread_mutex_lock(&queue_lock);
 	enqueue(&mlq_ready_queue[proc->prio], proc);
-	pthread_mutex_unlock(&queue_lock);	
+#ifdef SCHED_DBG
+	printf("\t[MLQ] t=%d Them PID %d vao queue %d\n",
+		(int)current_time(), proc->pid, proc->prio);
+#endif
+	pthread_mutex_unlock(&queue_lock);
 }
 
 struct pcb_t * get_proc(void) {
