@@ -28,8 +28,15 @@ typedef int memory_bank_t;
 // Invalid memory bank handle
 #define MEMORY_BANK_INVALID (-1)
 
-// Initialize a memory bank with given size in bytes
+// Initialize an owned memory bank with given size in bytes (standalone testbench).
 memory_bank_t memory_bank_init(size_t size_bytes);
+
+// Bind bank 0 to an existing RAM buffer (OS MEMPHY storage). The buffer remains
+// owned by the caller and is not freed by memory_bank_cleanup().
+int memory_bank_bind(void *buffer, size_t size_bytes);
+
+// Check that [offset, offset + length) is inside bank 0.
+int memory_bank_check_range(uint64_t offset, size_t length);
 
 // Cleanup all memory banks
 void memory_bank_cleanup(void);

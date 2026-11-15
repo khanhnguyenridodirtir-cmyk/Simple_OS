@@ -21,6 +21,10 @@ extern "C" {
 
 // Verilator RTL simulation functions
 int rtl_dma_init_simulation(void);
+void rtl_dma_set_pause(int paused);
+int dma_service_start(void);
+void dma_service_stop(void);
+void dma_service_pause(int paused);
 void rtl_dma_cleanup_simulation(void);
 int dpi_rtl_dma_copy(uint64_t src_offset, uint64_t dst_offset, uint64_t length);
 int dpi_rtl_dma_is_available(void);

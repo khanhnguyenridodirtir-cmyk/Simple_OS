@@ -1,158 +1,125 @@
 /*
- * Copyright (C) 2026 pdnguyen of HCMC University of Technology VNU-HCM
- *
- * demacOprx release
- * Source Code License Grant: The authors hereby grant to Licensee
- * personal permission to use and modify the Licensed Source Code
- * for the sole purpose of studying while attending the course CO2018.
- *
- * system bus - Only for dma_testbech simulation access
+ * System bus bridge between the Verilated DMA RTL and host RAM.
+ * Bank 0 may either own an allocation (standalone testbench) or borrow the
+ * OS MEMPHY storage (integrated OS simulation).
  */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <stdbool.h>
 #include "sysbus.h"
 
-// Maximum number of memory banks supported
-#define MAX_MEMORY_BANKS 8
-
-// Memory bank structure
 typedef struct {
-    uint8_t* data;
+    uint8_t *data;
     size_t size;
     int initialized;
+    int owns_data;
 } memory_bank_t_struct;
 
-// Array of memory banks
-static memory_bank_t_struct g_banks[MAX_MEMORY_BANKS] = {0};
+static memory_bank_t_struct g_banks[MAX_MEMORY_BANKS] = {{0}};
 static int g_bank_count = 0;
 
-// Initialize a memory bank with given size in bytes
-memory_bank_t memory_bank_init(size_t size_bytes) {
-    // Find first free slot
-    int free_slot = -1;
-    for (int i = 0; i < MAX_MEMORY_BANKS; i++) {
+memory_bank_t memory_bank_init(size_t size_bytes)
+{
+    if (size_bytes == 0) return MEMORY_BANK_INVALID;
+
+    for (int i = 0; i < MAX_MEMORY_BANKS; ++i) {
         if (!g_banks[i].initialized) {
-            free_slot = i;
-            break;
+            uint8_t *data = (uint8_t *)calloc(size_bytes, 1);
+            if (!data) return MEMORY_BANK_INVALID;
+            g_banks[i].data = data;
+            g_banks[i].size = size_bytes;
+            g_banks[i].initialized = 1;
+            g_banks[i].owns_data = 1;
+            ++g_bank_count;
+            printf("Memory bank [%d] initialized: %zu bytes\n", i, size_bytes);
+            return i;
         }
     }
-
-    if (free_slot == -1) {
-        printf("Maximum number of memory banks (%d) reached\n", MAX_MEMORY_BANKS);
-        return MEMORY_BANK_INVALID;
-    }
-
-    if (size_bytes == 0) {
-        printf("Invalid bank size: 0\n");
-        return MEMORY_BANK_INVALID;
-    }
-
-    uint8_t* data = (uint8_t*)malloc(size_bytes);
-    if (!data) {
-        printf("Failed to allocate memory bank of %zu bytes\n", size_bytes);
-        return MEMORY_BANK_INVALID;
-    }
-
-    memset(data, 0, size_bytes);
-    g_banks[free_slot].data = data;
-    g_banks[free_slot].size = size_bytes;
-    g_banks[free_slot].initialized = 1;
-    g_bank_count++;
-
-    printf("Memory bank [%d] initialized: %zu bytes at address %p\n", free_slot, size_bytes, (void*)data);
-    return free_slot;
+    return MEMORY_BANK_INVALID;
 }
 
-// Cleanup memory bank
-void memory_bank_cleanup(void) {
-    for (int i = 0; i < MAX_MEMORY_BANKS; i++) {
-        if (g_banks[i].initialized) {
-            if (g_banks[i].data) {
-                free(g_banks[i].data);
-                g_banks[i].data = NULL;
-            }
-            g_banks[i].size = 0;
-            g_banks[i].initialized = 0;
-            g_bank_count--;
-            printf("Memory bank [%d] cleaned up\n", i);
-        }
-    }
-}
+int memory_bank_bind(void *buffer, size_t size_bytes)
+{
+    if (!buffer || size_bytes == 0) return -1;
 
-int memory_bank_is_available(void) {
-    // Check if at least one memory bank is initialized
-    for (int i = 0; i < MAX_MEMORY_BANKS; i++) {
-        if (g_banks[i].initialized) {
-            return 1;
-        }
+    /* RTL currently addresses one flat RAM bank, mapped to bank 0. */
+    if (g_banks[0].initialized) {
+        if (g_banks[0].data == (uint8_t *)buffer &&
+            g_banks[0].size == size_bytes) return 0;
+        if (g_banks[0].owns_data) free(g_banks[0].data);
+        else return -1; /* Do not silently replace a live borrowed bank. */
+        g_banks[0] = (memory_bank_t_struct){0};
+        --g_bank_count;
     }
+
+    g_banks[0].data = (uint8_t *)buffer;
+    g_banks[0].size = size_bytes;
+    g_banks[0].initialized = 1;
+    g_banks[0].owns_data = 0;
+    ++g_bank_count;
     return 0;
 }
 
-// Get pointer to locate data at offset
-void* memory_bank_get_ptr(uint64_t offset) {
-    if (offset >= g_banks[0].size) {
-        return NULL;
+void memory_bank_cleanup(void)
+{
+    for (int i = 0; i < MAX_MEMORY_BANKS; ++i) {
+        if (!g_banks[i].initialized) continue;
+        if (g_banks[i].owns_data) free(g_banks[i].data);
+        g_banks[i] = (memory_bank_t_struct){0};
     }
-
-    return g_banks[0].data + offset;
+    g_bank_count = 0;
 }
 
-// Get bank size in bytes
-size_t memory_bank_get_size() {
-    return g_banks[0].size;
+int memory_bank_is_available(void)
+{
+    return g_banks[0].initialized && g_banks[0].data != NULL;
 }
 
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/**
- * DPI Callback: Called from RTL when DMA read access
- */
-int dpi_bank_read32_legacy(long long offset) {
-    uint8_t data[4] = {0};
-
-    void* src = memory_bank_get_ptr((size_t)offset);
-
-    //printf("MEM READ RESULT: Address=%p, DPI return=%x, Readback=%x, Match=%d\n",
-    //        (void*)((size_t)offset), *(unsigned int*)data, *(unsigned int*)data, 1);
-    //fflush(stdout);
-    
-    memcpy(&data, src, 4);
-
-    return  *((uint32_t*)data);
+int memory_bank_check_range(uint64_t offset, size_t length)
+{
+    if (!memory_bank_is_available()) return 0;
+    if (offset > (uint64_t)g_banks[0].size) return 0;
+    if (length > g_banks[0].size - (size_t)offset) return 0;
+    return 1;
 }
 
-/**
- * DPI Callback: Called from RTL when DMA write access
- */
-int dpi_bank_write32_legacy(long long offset, int value) {
-    void* dst = memory_bank_get_ptr((size_t)offset);
-    //printf("MEM WRITE RESULT: Address=%p, Write data=%x, Write rc=0, Readback=%x, Match=1\n",
-    //        (void*)((size_t)offset), *(unsigned int*)&value, *(unsigned int*)&value);
-    memcpy(dst,  &value, 4);
-    //fflush(stdout);
-       
+void *memory_bank_get_ptr(uint64_t offset)
+{
+    if (!memory_bank_check_range(offset, 1)) return NULL;
+    return g_banks[0].data + (size_t)offset;
+}
+
+size_t memory_bank_get_size(void)
+{
+    return memory_bank_is_available() ? g_banks[0].size : 0;
+}
+
+/* DPI callbacks called by the generated Verilator model. */
+int dpi_bank_read32_legacy(long long offset)
+{
+    uint32_t value = 0;
+    if (offset < 0 || !memory_bank_check_range((uint64_t)offset, sizeof(value))) {
+        fprintf(stderr, "DMA bus read out of range: 0x%llx\n", offset);
+        return 0;
+    }
+    memcpy(&value, g_banks[0].data + (size_t)offset, sizeof(value));
+    return (int)value;
+}
+
+int dpi_bank_write32_legacy(long long offset, int value)
+{
+    if (offset < 0 || !memory_bank_check_range((uint64_t)offset, sizeof(uint32_t))) {
+        fprintf(stderr, "DMA bus write out of range: 0x%llx\n", offset);
+        return -1;
+    }
+    uint32_t word = (uint32_t)value;
+    memcpy(g_banks[0].data + (size_t)offset, &word, sizeof(word));
     return 0;
 }
 
-
-/**
- * DPI Callback: Called from RTL when DMA transfer completes
- */
 void dma_done_callback(void)
 {
-    printf("DMA completed\n");
-    fflush(stdout);   // keep ordering vs. printf_IMPORTANT output
+    printf("DMA RTL callback: transfer completed\n");
+    fflush(stdout);
 }
-
-#ifdef __cplusplus
-}
-#endif
-
