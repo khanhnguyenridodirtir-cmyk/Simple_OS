@@ -373,7 +373,7 @@ int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
     free(mp->storage);
     mp->storage = NULL;
     return -1;
-}
+   }
 
    int pagze;
 #ifdef MM64

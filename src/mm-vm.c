@@ -135,7 +135,8 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
 
   /* Cấp khung vật lý và ánh xạ PTE ngay khi mở rộng vùng nhớ */
   struct vm_rg_struct ret_rg;
-if (vm_map_ram(caller, cur_vma->vm_start, cur_vma->vm_end, old_sbrk, incpgnum, &ret_rg) == (addr_t)-1)
+  // if ep kieu lai cho dung ket qua
+  if (vm_map_ram(caller, cur_vma->vm_start, cur_vma->vm_end, old_sbrk, incpgnum, &ret_rg) == (addr_t)-1)
   {
     cur_vma->vm_end = old_sbrk;
     return -1;
