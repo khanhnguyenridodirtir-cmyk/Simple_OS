@@ -276,10 +276,15 @@ printf("%s:%d\n",__func__,__LINE__);
 
 int pg_getpage(struct mm_struct *mm, int pgn, int *fpn, struct pcb_t *caller)
 {
+#ifdef MM64
+    #define MAXPG PAGING64_MAX_PGN
+#else
+    #define MAXPG PAGING_MAX_PGN
+ #endif
   // B1: Xac dinh tinh hop le cua input
   if (mm == NULL || fpn == NULL || caller == NULL ||
       caller->mm == NULL || caller->krnl == NULL || caller->krnl->mram == NULL ||
-      pgn < 0 || pgn >= PAGING_MAX_PGN || mm->pgd == NULL)
+      pgn < 0 || pgn >= MAXPG || mm->pgd == NULL)
     return -1;
 
   // B2: Xac dinh page table dang thao tac la Kernel hay User
@@ -438,8 +443,14 @@ int pg_getval(struct mm_struct *mm, int addr, BYTE *data, struct pcb_t *caller)
   if (mm == NULL || data == NULL || caller == NULL || caller->krnl == NULL)
     return -1;
     // Phan tich dia chi thanh page num va offset de tim
+
+ #ifdef MM64
+  int pgn = addr / PAGING64_PAGESZ;   // Hoặc (addr >> PAGING64_ADDR_PT_SHIFT)
+  int off = addr % PAGING64_PAGESZ;   // Hoặc (addr & 0xFFF)
+#else
   int pgn = PAGING_PGN(addr);
   int off = PAGING_OFFST(addr);
+#endif
   int fpn;
   // lay frame co trang la pgn
   if (pg_getpage(mm, pgn, &fpn, caller) != 0)
@@ -482,8 +493,13 @@ int pg_setval(struct mm_struct *mm, int addr, BYTE value, struct pcb_t *caller)
   if (mm == NULL || caller == NULL || caller->krnl == NULL)
     return -1;
   // B2 : phan tich dia chi thanh pgn va offset
+#ifdef MM64
+  int pgn = addr / PAGING64_PAGESZ;   // Hoặc (addr >> PAGING64_ADDR_PT_SHIFT)
+  int off = addr % PAGING64_PAGESZ;   // Hoặc (addr & 0xFFF)
+#else
   int pgn = PAGING_PGN(addr);
   int off = PAGING_OFFST(addr);
+#endif
   int fpn;
 
   /* Get the page to MEMRAM, swap from MEMSWAP if needed */
@@ -527,7 +543,10 @@ int __read(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE *data)
   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
 
   /* TODO Invalid memory identify */
-  if (currg == NULL || cur_vma == NULL || offset < currg->rg_end - currg->rg_start){
+ if (currg == NULL || cur_vma == NULL ||
+    (currg->rg_start == 0 && currg->rg_end == 0) ||
+    currg->rg_start >= currg->rg_end ||
+    offset >= currg->rg_end - currg->rg_start){
     pthread_mutex_unlock(&mmvm_lock);
     return -1;
   }
@@ -556,7 +575,7 @@ int libread(
     return -1;
   }
   // gan gia tri vao data
-  *destination = data;
+  *destination = (uint8_t)data;
 #ifdef IODUMP
   /* TODO dump IO content (if needed) */
 #ifdef PAGETBL_DUMP
@@ -584,7 +603,10 @@ int __write(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE value
   struct vm_rg_struct *currg = get_symrg_byid(caller->mm, rgid);
   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
 
-  if (currg == NULL || cur_vma == NULL || offset < currg->rg_end - currg->rg_start) /* Invalid memory identify */
+  if (currg == NULL || cur_vma == NULL ||
+    (currg->rg_start == 0 && currg->rg_end == 0) ||
+    currg->rg_start >= currg->rg_end ||
+    offset >= currg->rg_end - currg->rg_start) /* Invalid memory identify */
   {
     pthread_mutex_unlock(&mmvm_lock);
     return -1;

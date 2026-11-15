@@ -88,7 +88,9 @@ int main(void)
   /* 21-27: page mapping, FIFO, swap-in/out, exhaustion */
   fixture_init(&f, 3, 3, PAGE * 8); alloc_one(&f, 0, PAGE + 16);
   check(libwrite(&f.proc, 0x21, 0, 0) == 0 && PAGING_PAGE_PRESENT(pte_get_entry(&f.mm, 0, &f.proc)), "T21 first user page is mapped into RAM on demand");
-  check(libwrite(&f.proc, 0x22, 0, PAGE) == 0 && PAGING_PAGE_PRESENT(pte_get_entry(&f.mm, PAGE / PAGING_PAGESZ, &f.proc)), "T22 second virtual page is mapped independently");
+  check(libwrite(&f.proc, 0x22, 0, PAGE) == 0 && 
+      PAGING_PAGE_PRESENT(pte_get_entry(&f.mm, PAGE / PAGING64_PAGESZ, &f.proc)), 
+      "T22 second virtual page is mapped independently");
   fixture_destroy(&f);
 
   fixture_init(&f, 1, 2, PAGE * 8); alloc_one(&f, 0, PAGE * 2);

@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+
 /*
  *  MEMPHY_mv_csr - move MEMPHY cursor
  *  @mp: memphy struct
@@ -102,10 +103,10 @@ int MEMPHY_read(struct memphy_struct *mp, addr_t addr, BYTE *value)
 int MEMPHY_seq_write(struct memphy_struct *mp, addr_t addr, BYTE value)
 {
 
-   if (mp == NULL || addr >= (addr_t)mp->maxsz || value < 0)
-      return -1;
-
-   if (mp->rdmflg)
+  if (mp == NULL || addr >= (addr_t)mp->maxsz){
+   return -1;
+  }
+  if (mp->rdmflg)
       return -1; /* Not compatible mode for sequential read */
 
    MEMPHY_mv_csr(mp, addr);
@@ -260,6 +261,8 @@ int MEMPHY_get_freefp(struct memphy_struct *mp, addr_t *retfpn)
  */
 int MEMPHY_dump(struct memphy_struct *mp)
 {
+   if (mp == NULL || mp->storage == NULL) // <-- THÊM DÒNG NÀY
+      return -1;
    pthread_mutex_lock(&mp->lock);
   /*
    * TODO dump memphy contnt mp->storage
@@ -268,7 +271,7 @@ int MEMPHY_dump(struct memphy_struct *mp)
    printf("\n--- MEMPHY DUMP ---\n");
    for (int i = 0; i < mp->maxsz; i++) {
       if (mp->storage[i] != 0) {
-         printf("Addr 0x%08x: 0x%02x\n", i, mp->storage[i]);
+         printf("Addr 0x%08x: 0x%02x\n", i, (uint8_t)mp->storage[i]);
       }
    }
    printf("-------------------\n");
@@ -356,6 +359,8 @@ int MEMPHY_put_freefp(struct memphy_struct *mp, addr_t fpn)
  */
 int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
 {
+   if (mp == NULL || max_size == 0) // <-- THÊM DÒNG NÀY
+      return -1;
    mp->storage = (BYTE *)malloc(max_size * sizeof(BYTE));
    if(mp->storage==NULL){
       return -1;

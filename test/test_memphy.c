@@ -130,20 +130,78 @@ static void test_sequential_and_null(void)
         "sequential mode (rdmflg=0) supports direct and wrapper I/O");
   release_memphy(&sequential);
 }
+static void test_boundary_and_integrity(struct memphy_struct *mp)
+{
+  BYTE readback = 0;
 
+  /* 1. Biên trên hợp lệ (byte cuối cùng của RAM) */
+  check(MEMPHY_write(mp, TEST_RAM_SIZE - 1, (BYTE)0xFE) == 0 &&
+            MEMPHY_read(mp, TEST_RAM_SIZE - 1, &readback) == 0 &&
+            readback == (BYTE)0xFE,
+        "read/write at the exact last valid byte (maxsz - 1) succeeds");
+
+  /* 2. Vượt biên địa chỉ vật lý */
+  check(MEMPHY_write(mp, TEST_RAM_SIZE, (BYTE)0x11) == -1 &&
+            MEMPHY_read(mp, TEST_RAM_SIZE, &readback) == -1 &&
+            MEMPHY_write(mp, TEST_RAM_SIZE + 100, (BYTE)0x22) == -1 &&
+            MEMPHY_read(mp, TEST_RAM_SIZE + 100, &readback) == -1,
+        "out-of-bounds read/write (addr >= maxsz) is rejected");
+
+  /* 3. Ghi/đọc xuyên ranh giới 2 frame liền kề (Frame 0 -> Frame 1) */
+  addr_t boundary = TEST_PAGE_SIZE - 1;
+  check(MEMPHY_write(mp, boundary, (BYTE)0x80) == 0 &&
+            MEMPHY_write(mp, boundary + 1, (BYTE)0xFF) == 0 &&
+            MEMPHY_read(mp, boundary, &readback) == 0 && readback == (BYTE)0x80 &&
+            MEMPHY_read(mp, boundary + 1, &readback) == 0 && readback == (BYTE)0xFF,
+        "cross-frame boundary bytes (0x80, 0xFF) do not overwrite each other");
+
+  /* 4. Ghi/đọc toàn bộ 256 giá trị byte (0x00 -> 0xFF) */
+  int all_bytes_ok = 1;
+  for (int b = 0; b < 256; b++)
+  {
+    if (MEMPHY_write(mp, (addr_t)b, (BYTE)b) != 0 ||
+        MEMPHY_read(mp, (addr_t)b, &readback) != 0 ||
+        readback != (BYTE)b)
+    {
+      all_bytes_ok = 0;
+      break;
+    }
+  }
+  check(all_bytes_ok, "full 8-bit byte range (0x00..0xFF) is preserved accurately");
+}
+
+static void test_invalid_arguments(struct memphy_struct *mp)
+{
+  struct memphy_struct bad_mp = {0};
+  addr_t fpn = 0;
+
+  check(init_memphy(NULL, TEST_RAM_SIZE, 1) == -1 &&
+            init_memphy(&bad_mp, 0, 1) == -1,
+        "init_memphy rejects NULL struct or zero size");
+
+  check(MEMPHY_get_freefp(NULL, &fpn) == -1 &&
+            MEMPHY_get_freefp(mp, NULL) == -1 &&
+            MEMPHY_put_freefp(NULL, 0) == -1,
+        "frame management APIs reject NULL pointers");
+
+  check(MEMPHY_dump(mp) == 0 && MEMPHY_dump(NULL) == -1,
+        "MEMPHY_dump handles valid and NULL devices safely");
+}
 int main(void)
 {
   struct memphy_struct ram = {0};
 
-  printf("=== MEMPHY TESTS ===\n");
+  printf("=== MEMPHY EXTENDED TESTS ===\n");
   check(init_memphy(&ram, TEST_RAM_SIZE, 1) == 0,
         "random-access device initialization succeeds");
   test_init_and_format(&ram);
   test_get_until_empty(&ram);
   test_put_and_reuse(&ram);
   test_random_read_write(&ram);
+  test_boundary_and_integrity(&ram);
   test_sequential_and_null();
-  release_memphy(&ram);
+  test_invalid_arguments(&ram);
+  MEMPHY_destroy(&ram);
 
   printf("=== MEMPHY RESULT: %d failure(s) ===\n", failures);
   return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
