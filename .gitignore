@@ -2,3 +2,12 @@ hk261
 *.pdf
 *.doc
 *.docx
+# File object va thu vien tinh
+*.o
+*.a
+*.so
+*.out
+
+# Cac file thuc thi sinh ra khi chay make
+
+test_*
