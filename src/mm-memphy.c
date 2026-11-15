@@ -369,7 +369,11 @@ int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
    memset(mp->storage, 0, max_size * sizeof(BYTE));
 
    // Neu cho them truong giu lai cho dong bo nhieu luong
-   pthread_mutex_init(&mp->lock, NULL);
+   if (pthread_mutex_init(&mp->lock, NULL) != 0) {
+    free(mp->storage);
+    mp->storage = NULL;
+    return -1;
+}
 
    int pagze;
 #ifdef MM64

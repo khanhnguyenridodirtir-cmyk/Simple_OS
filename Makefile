@@ -83,12 +83,13 @@ HEADER = $(wildcard $(INCLUDE)/*.h)
   
 all: os
 #mem sched os
+
 # Target dùng để test riêng phân hệ Bộ nhớ vật lý (test/test_mm_memphy.c)
 test_mem: $(OBJ) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o
 	$(CXX) $(LFLAGS) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o -o test_mem $(LIB)
 
-test_memphy: test/test_memphy.c src/mm-memphy.c
-	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
+test_memphy: test/test_memphy.c test/test_helpers.c src/mm-memphy.c test/test_helpers.h
+	$(CC) $(INC) -Itest -std=gnu11 -Wall -Wextra $(DEBUG) test/test_memphy.c test/test_helpers.c src/mm-memphy.c -o $@ $(LIB)
 
 test_mm64: test/test_mm64.c src/mm64.c src/mm-memphy.c
 	$(CC) $(INC) -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
