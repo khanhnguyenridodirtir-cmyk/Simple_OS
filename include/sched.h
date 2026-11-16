@@ -1,11 +1,7 @@
-#if defined(_PTHREAD_H) && !defined(__SCHED_H_FORWARDED)
+#if defined(_PTHREAD_H) && !defined(__SCHED_H_FORWARDED) // tranh viec khai bao pthread vong lam ko hien / ko dung dc
 #define __SCHED_H_FORWARDED
 #include_next <sched.h>
 #else
-
-#ifndef QUEUE_H
-#define QUEUE_H
-
 #include "common.h"
 
 #ifdef __cplusplus
@@ -36,8 +32,6 @@ void finish_proc(struct pcb_t * proc);
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif
 
 #endif

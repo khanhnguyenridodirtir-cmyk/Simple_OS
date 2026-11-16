@@ -20,7 +20,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 /*
  *  MEMPHY_mv_csr - move MEMPHY cursor
  *  @mp: memphy struct

@@ -87,9 +87,9 @@ struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, ad
   newrg->rg_end = cur_vma->sbrk + alignedsz;
   newrg->rg_next = NULL;
 
+
   return newrg;
 }
-
 /*validate_overlap_vm_area
  *@caller: caller
  *@vmaid: ID vm area to alloc memory region
@@ -99,6 +99,7 @@ struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, ad
  */
 int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, addr_t vmaend)
 {
+  /* TODO validate the planned memory area is not overlapped */
   struct mm_struct *mm = (caller && caller->mm) ? caller->mm : ((caller && caller->krnl) ? caller->krnl->mm : NULL);
   if (mm == NULL) return -1;
     

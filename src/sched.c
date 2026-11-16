@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "timer.h"
+// Nho comment neu ko debug
 #define SCHED_DBG 1
 
 static struct queue_t ready_queue;
@@ -122,11 +123,15 @@ struct pcb_t * get_mlq_proc(void) {
 }
 
 void put_mlq_proc(struct pcb_t * proc) {
+	
+	if (proc == NULL) return;
 	pthread_mutex_lock(&queue_lock);
-	proc->krnl->ready_queue = &ready_queue;
-	proc->krnl->mlq_ready_queue = mlq_ready_queue;
-	proc->krnl->running_list = &running_list;
-
+	
+	if (proc->krnl != NULL) {
+		proc->krnl->ready_queue = &ready_queue;
+		proc->krnl->mlq_ready_queue = mlq_ready_queue;
+		proc->krnl->running_list = &running_list;
+	}
 	/* TODO: put running proc to running_list 
 	 *       It worth to protect by a mechanism.
 	 * 
@@ -144,6 +149,7 @@ void put_mlq_proc(struct pcb_t * proc) {
 }
 
 void add_mlq_proc(struct pcb_t * proc) {
+	if(proc==NULL||proc->krnl==NULL) return ;
 	pthread_mutex_lock(&queue_lock);
 	proc->krnl->ready_queue = &ready_queue;
 	proc->krnl->mlq_ready_queue = mlq_ready_queue;

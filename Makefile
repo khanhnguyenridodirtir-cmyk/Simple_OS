@@ -80,9 +80,18 @@ OS_OBJ += $(VDMA_OBJ_OS)
 
 SCHED_OBJ = $(addprefix $(OBJ)/, cpu.o loader.o)
 HEADER = $(wildcard $(INCLUDE)/*.h)
-  
+
+# =====================================================================
+# TEST CHO PHAN HE SCHEDULER (TV1)
+# =====================================================================
+TEST_TV1_BIN = test_tv1
+TEST_TV1_SRC =  test/test_tv1_full.c $(SRC)/sched.c $(SRC)/queue.c $(SRC)/timer.c
+TEST_TV1_FLAGS = $(INC) -Itest -DMLQ_SCHED -std=gnu11 -Wall $(DEBUG)
+
 all: os
 #mem sched os
+$(TEST_TV1_BIN): $(TEST_TV1_SRC)
+	$(CC) $(TEST_TV1_FLAGS) $^ -o $@ $(LIB)
 
 # Target dùng để test riêng phân hệ Bộ nhớ vật lý (test/test_mm_memphy.c)
 test_mem: $(OBJ) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o
@@ -96,7 +105,6 @@ test_mm64: test/test_mm64.c test/test_helpers.c src/mm64.c src/mm-memphy.c src/m
 
 test_libmem: test/test_libmem.c test/test_helpers.c src/libmem.c src/mm64.c src/mm-memphy.c src/sys_mem.c src/mm-vm.c
 	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
-	
 test_syscall17: test/test_syscall17.c test/test_helpers.c src/sys_mem.c src/libstd.c src/libmem.c src/mm64.c src/mm-memphy.c src/mm-vm.c
 	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
 test_integration_mem: test/test_integration_mem.c test/test_helpers.c src/sys_mem.c src/libstd.c src/libmem.c src/mm64.c src/mm-memphy.c src/mm-vm.c
@@ -159,5 +167,5 @@ clean:
 	rm -f $(SRC)/*.lst
 	rm -f $(OBJ)/*.o os sched mem pdg dma_testbench test_memphy test_mm64 test_libmem test_integration_mem *.vcd
 	rm -rf $(OBJ)
-
+	
 .PHONY: test
