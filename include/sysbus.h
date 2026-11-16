@@ -19,40 +19,36 @@
 extern "C" {
 #endif
 
-// Maximum number of memory banks supported
 #define MAX_MEMORY_BANKS 8
 
-// Memory bank handle type
 typedef int memory_bank_t;
-
-// Invalid memory bank handle
 #define MEMORY_BANK_INVALID (-1)
 
-// Initialize a memory bank with given size in bytes
+/* Allocate an owned RAM bank for the standalone DMA testbench. */
 memory_bank_t memory_bank_init(size_t size_bytes);
 
-// Cleanup all memory banks
+/* Bind/attach an existing RAM buffer as bank 0. The caller keeps ownership. */
+int memory_bank_bind(void *buffer, size_t size_bytes);
+memory_bank_t memory_bank_attach(void *storage, size_t size_bytes);
+
+/* Validate [offset, offset + length) against bank 0. */
+int memory_bank_check_range(uint64_t offset, size_t length);
+
 void memory_bank_cleanup(void);
-
-// Get pointer to locate data at offset
-void* memory_bank_get_ptr(uint64_t offset);
-
-// Get bank size in bytes
+void *memory_bank_get_ptr(uint64_t offset);
 size_t memory_bank_get_size(void);
-
-// Check if memory bank is initialized
 int memory_bank_is_available(void);
 
-// DPI Callback: Called from RTL when DMA read access
+/* DPI callbacks invoked by the generated RTL model. */
 int dpi_bank_read32_legacy(long long offset);
-
-// DPI Callback: Called from RTL when DMA write access
 int dpi_bank_write32_legacy(long long offset, int value);
-
-// DPI Callback: Called from RTL when DMA transfer completes
 void dma_done_callback(void);
+
+/* Number of completion callbacks observed since the last reset. */
+unsigned long dma_done_count(void);
+void dma_done_reset(void);
+
 #ifdef __cplusplus
 }
 #endif
-
-#endif // SYSTEM_BUS_H
+#endif /* SYSTEM_BUS_H */

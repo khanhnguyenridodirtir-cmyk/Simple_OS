@@ -64,7 +64,13 @@ int init_pte(addr_t *pte,
 
 
 /*
- * get_pd_from_address - Parse address to 5 page directory level
+ * get_pd_from_pagenum - Parse address to 5 page directory level
+ * @pgn   : pagenumer
+ * @pgd   : page global directory
+ * @p4d   : page level directory
+ * @pud   : page upper directory
+ * @pmd   : page middle directory
+ * @pt    : page table 
  */
 int get_pd_from_address(addr_t addr, addr_t* pgd, addr_t* p4d, addr_t* pud, addr_t* pmd, addr_t* pt)
 {
@@ -73,13 +79,21 @@ int get_pd_from_address(addr_t addr, addr_t* pgd, addr_t* p4d, addr_t* pud, addr
 	*p4d = (addr&PAGING64_ADDR_P4D_MASK)>>PAGING64_ADDR_P4D_LOBIT;
 	*pud = (addr&PAGING64_ADDR_PUD_MASK)>>PAGING64_ADDR_PUD_LOBIT;
 	*pmd = (addr&PAGING64_ADDR_PMD_MASK)>>PAGING64_ADDR_PMD_LOBIT;
-	*pt  = (addr&PAGING64_ADDR_PT_MASK) >>PAGING64_ADDR_PT_LOBIT;
+	*pt = (addr&PAGING64_ADDR_PT_MASK)>>PAGING64_ADDR_PT_LOBIT;
+
+	/* TODO: implement the page direactories mapping */
 
 	return 0;
 }
 
 /*
  * get_pd_from_pagenum - Parse page number to 5 page directory level
+ * @pgn   : pagenumer
+ * @pgd   : page global directory
+ * @p4d   : page level directory
+ * @pud   : page upper directory
+ * @pmd   : page middle directory
+ * @pt    : page table 
  */
 int get_pd_from_pagenum(addr_t pgn, addr_t* pgd, addr_t* p4d, addr_t* pud, addr_t* pmd, addr_t* pt)
 {
@@ -100,6 +114,9 @@ static addr_t* get_pte_ptr(struct mm_struct *mm, addr_t pgn) {
 
 /*
  * pte_set_swap - Set PTE entry for swapped page
+ * @pte    : target page table entry (PTE)
+ * @swptyp : swap type
+ * @swpoff : swap offset
  */
 int pte_set_swap(struct pcb_t *caller, addr_t pgn, int swptyp, addr_t swpoff)
 {
@@ -123,6 +140,9 @@ int pte_set_swap(struct pcb_t *caller, addr_t pgn, int swptyp, addr_t swpoff)
 
 /*
  * pte_set_fpn - Set PTE entry for on-line page
+ * @pte   : target page table entry (PTE)
+ * @fpn   : frame page number (FPN)
+ * @caller: caller
  */
 int pte_set_fpn(struct mm_struct *mm, addr_t pgn, addr_t fpn, struct pcb_t *caller)
 {
@@ -144,7 +164,12 @@ int pte_set_fpn(struct mm_struct *mm, addr_t pgn, addr_t fpn, struct pcb_t *call
 }
 
 
-/* Get PTE page table entry */
+/* Get PTE page table entry
+ * @caller : caller
+ * @pgn    : page number
+ * @caller: caller
+ * @ret    : page table entry
+ **/
 addr_t pte_get_entry(struct mm_struct *mm, addr_t pgn, struct pcb_t *caller)
 {
   struct krnl_t *krnl = (caller) ? caller->krnl : NULL;
@@ -157,7 +182,11 @@ addr_t pte_get_entry(struct mm_struct *mm, addr_t pgn, struct pcb_t *caller)
   return target_mm->pt[pt];
 }
 
-/* Set PTE page table entry */
+/* Set PTE page table entry
+ * @caller : caller
+ * @pgn    : page number
+ * @ret    : page table entry
+ **/
 int pte_set_entry(struct mm_struct *mm, addr_t pgn, uint64_t pte_val, struct pcb_t *caller)
 {
   struct krnl_t *krnl = (caller) ? caller->krnl : NULL;
@@ -245,7 +274,12 @@ addr_t vmap_page_range(struct pcb_t *caller,
 
 /*
  * alloc_pages_range - allocate req_pgnum of frame in ram
+  * @caller    : caller
+ * @req_pgnum : request page num
+ * @frm_lst   : frame list
  */
+
+ 
 addr_t alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_struct **frm_lst)
 {
   addr_t fpn = 0;
@@ -459,7 +493,6 @@ int __swap_cp_page(struct memphy_struct *mpsrc, addr_t srcfpn,
 {
   int cellidx;
   addr_t addrsrc, addrdst;
-
   for (cellidx = 0; cellidx < PAGING64_PAGESZ; cellidx++)
   {
     addrsrc = srcfpn * PAGING64_PAGESZ + cellidx;
@@ -475,6 +508,8 @@ int __swap_cp_page(struct memphy_struct *mpsrc, addr_t srcfpn,
 
 /*
  *Initialize a empty Memory Management instance
+ * @mm:     self mm
+ * @caller: mm owner
  */
 int init_mm(struct mm_struct *mm, struct pcb_t *caller)
 {

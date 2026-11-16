@@ -20,7 +20,11 @@
 #include <stdio.h>
 #include <pthread.h>
 
-/*get_vma_by_num - get vm area by numID */
+/*get_vma_by_num - get vm area by numID
+ *@mm: memory region
+ *@vmaid: ID vm area to alloc memory region
+ *
+ */
 struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
 {
   struct vm_area_struct *pvma = mm->mmap;
@@ -48,7 +52,15 @@ int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
     return 0;
 }
 
-/*get_vm_area_node - get vm area for a number of pages */
+
+/*get_vm_area_node - get vm area for a number of pages
+ *@caller: caller
+ *@vmaid: ID vm area to alloc memory region
+ *@incpgnum: number of page
+ *@vmastart: vma end
+ *@vmaend: vma end
+ *
+ */
 struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, addr_t alignedsz)
 {
   struct vm_rg_struct * newrg = NULL;
@@ -66,12 +78,20 @@ struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, ad
   newrg->rg_end = cur_vma->sbrk + alignedsz;
   newrg->rg_next = NULL;
 
+
   return newrg;
 }
-
+/*validate_overlap_vm_area
+ *@caller: caller
+ *@vmaid: ID vm area to alloc memory region
+ *@vmastart: vma end
+ *@vmaend: vma end
+ *
+ */
 /*validate_overlap_vm_area */
 int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, addr_t vmaend)
 {
+  /* TODO validate the planned memory area is not overlapped */
   struct mm_struct *mm = (caller && caller->mm) ? caller->mm : ((caller && caller->krnl) ? caller->krnl->mm : NULL);
   if (mm == NULL)
     return -1;
@@ -106,7 +126,12 @@ int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, a
   return 0;
 }
 
-/*inc_vma_limit - increase vm area limits to reserve space for new variable */
+/*inc_vma_limit - increase vm area limits to reserve space for new variable
+ *@caller: caller
+ *@vmaid: ID vm area to alloc memory region
+ *@inc_sz: increment size
+ *
+ */
 int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
 {
   struct mm_struct *mm = (caller && caller->mm) ? caller->mm : ((caller && caller->krnl) ? caller->krnl->mm : NULL);

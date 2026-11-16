@@ -1,35 +1,60 @@
-# Lưu ý push code
-1. Mỗi thành viên làm trong 1 nhánh và push code lên nhánh đó, chỉ gộp khi đã test và chốt hoàn tất.
-2. Không code hãy chú thích những điểm quan trọng, nếu có thể hãy viết README.md cho nhánh đó cho mọi người dễ review.
-# Lưu ý chạy và setup
-## demacOprx - OS Simulation for CO2018
+# demacOprx – OS Simulation with DMA (Verilator RTL)
 
-Operating System Simulation with DMA (Verilator RTL) for HCMC University of Technology Course CO2018.
+Operating System Simulation for HCMC University of Technology Course CO2018.
 
-### Build full OS simulation - The output file ./os
+## Làm việc nhóm
+
+1. Mỗi thành viên làm trên một branch riêng và push code lên branch đó.
+2. Chỉ merge sau khi đã kiểm tra và test phần việc của branch.
+3. Ghi chú các điểm quan trọng trong code; cập nhật README khi thêm chức năng để các thành viên khác dễ review.
+
+## Môi trường
+
+Dự án sử dụng Ubuntu/Linux, C/C++ và Verilator để mô phỏng DMA RTL.
+Tham khảo [Course CO2018 Documentation](https://docs.google.com/document/d/1vCxl0sBotFjONqRJBAlnkTVYtlL1XZQrTyVl_dO0zxg/edit?usp=sharing).
+
+## Build toàn bộ OS
 
 ```bash
-make os    # Build full OS simulation. The output file ./os
+make clean
+make os
 ```
-Run os simulation
+
+Chạy mô phỏng:
+
 ```bash
-## OS simulation
 ./os [configuration_file]
 ```
 
-## Build only DMA module - The output file dma_testbench
+Ví dụ:
 
 ```bash
-make dma 
+./os os_dma_queue
 ```
-Run DMA module:
+
+## Build DMA testbench độc lập
+
+```bash
+make dma
+```
+
+Chạy testbench:
+
 ```bash
 ./dma_testbench
 ./dma_testbench 0x1000 0x2000 1024
+./dma_testbench 0x1000 0x2000 1024 async
 ```
-## demacOprx environment
-Ubuntu Virtual Machine image for Intel-x86 and AARCH64 (required HCMUT.SSO system)
-[Course CO2018 Documentation](https://docs.google.com/document/d/1vCxl0sBotFjONqRJBAlnkTVYtlL1XZQrTyVl_dO0zxg/edit?usp=sharing "Course CO2018 Documentation - HCMC University of Technology")
+
+## Kiến trúc DMA sau khi hợp nhất
+
+- CPU gọi `libmem_dma_memcpy()` và nạp yêu cầu DMA bất đồng bộ; CPU không phải chờ DMA copy xong.
+- `co_processor()` chạy song song với CPU, cấp clock cho RTL theo từng time slot.
+- Một hàng đợi FIFO phần mềm xử lý các yêu cầu khi kênh DMA đơn đang bận.
+- System bus dùng bank 0. Khi chạy OS, bank 0 trỏ đến RAM thật `os.mram->storage`; khi chạy testbench độc lập, bank 0 được cấp phát riêng.
+- Các vùng đọc/ghi được kiểm tra biên trước khi RTL truy cập RAM.
+
+Chi tiết handshake, trạng thái FSM, giới hạn độ dài và quy tắc nhả kênh nằm trong [docs/CHOT-INTERFACE-DMA.md](docs/CHOT-INTERFACE-DMA.md).
 
 ## License
 
