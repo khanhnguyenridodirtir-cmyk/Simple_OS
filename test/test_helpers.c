@@ -238,3 +238,12 @@ int verify_memphy_invariants(struct memphy_struct *mp,
     free(seen);
     return ok;
 }
+int do_dma_start(struct pcb_t *caller, uint64_t source,
+                 uint64_t destination, uint64_t length)
+{
+    (void)caller;
+    (void)source;
+    (void)destination;
+    (void)length;
+    return -1;
+}

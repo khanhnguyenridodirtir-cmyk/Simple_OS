@@ -56,7 +56,8 @@ void test_memphy_destroy(struct memphy_struct *mp, int initialized);
 /* Check list integrity, frame range, uniqueness, and total frame accounting. */
 int verify_memphy_invariants(struct memphy_struct *mp,
                              int expected_total_frames);
-
+int do_dma_start(struct pcb_t *caller, uint64_t source,
+                 uint64_t destination, uint64_t length);
 static inline int test_memphy_page_size(void)
 {
 #ifdef MM64
