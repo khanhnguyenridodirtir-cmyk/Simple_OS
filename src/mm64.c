@@ -125,19 +125,19 @@ int pte_set_swap(struct pcb_t *caller, addr_t pgn, int swptyp, addr_t swpoff)
   addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
   // dummy pte alloc to avoid runtime error
-  pte = malloc(sizeof(addr_t));
+  //pte = malloc(sizeof(addr_t));
 
 #ifdef MM64    
   /* Get value from the system */
+  if (mm->pt == NULL) return -1;
   get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt);
-  
-  // Gan pte vao mang pt thong qua con tro mm an toan
-  pte = &mm->pt[pt]; 
+  pte = &mm->pt[pt];
 #else
+  if (mm->pgd == NULL) return -1;
   pte = &mm->pgd[pgn];
 #endif
 
-  SETBIT(*pte, PAGING_PTE_PRESENT_MASK);
+  CLRBIT(*pte, PAGING_PTE_PRESENT_MASK); // Xoa bit present khi day ra khoi swap
   SETBIT(*pte, PAGING_PTE_SWAPPED_MASK);
   
   CLRBIT(*pte, PAGING_PTE_DIRTY_MASK);
@@ -200,14 +200,17 @@ addr_t pte_get_entry(struct mm_struct *mm, addr_t pgn, struct pcb_t *caller)
   addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
   // dummy pte alloc to avoid runtime error
-  pte = malloc(sizeof(addr_t));
+  
 
 #ifdef MM64    
   /* Get value from the system */
+  if (mm->pt == NULL) return 0;
   get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt);
+  pte = &mm->pt[pt];
   
-  pte = &mm->pt[pt]; 
+ 
 #else
+  if (mm->pgd == NULL) return 0;
   pte = &mm->pgd[pgn];
 #endif
   
@@ -228,14 +231,15 @@ int pte_set_entry(struct mm_struct *mm, addr_t pgn, uint64_t pte_val, struct pcb
   addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
   // dummy pte alloc to avoid runtime error
-  pte = malloc(sizeof(addr_t));
+  
 
 #ifdef MM64    
   /* Get value from the system */
+  if (mm->pt == NULL) return -1;
   get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt);
-  
   pte = &mm->pt[pt]; 
 #else
+  if (mm->pt == NULL) return 0;
   pte = &mm->pgd[pgn];
 #endif
 
@@ -301,13 +305,13 @@ addr_t vmap_page_range(struct pcb_t *caller,        // process call
       addr_t swpfpn = 0;
       if (MEMPHY_get_freefp(caller->krnl->active_mswp, &swpfpn) == 0) {
         pte_set_swap(caller, pgn + pgit, 0, swpfpn);
-        enlist_pgn_node(&mm->fifo_pgn, pgn + pgit);
+       // enlist_pgn_node(&mm->fifo_pgn, pgn + pgit);
       }
     } else if (fpit->fpn & PENDING_SWP_FLAG) {
       // B1.2 : Trang da duoc alloc_pages_range day san ra SWAP -> gan PTE SWAP va dua vao fifo_pgn
       addr_t swpfpn = fpit->fpn & ~PENDING_SWP_FLAG;
       pte_set_swap(caller, pgn + pgit, 0, swpfpn);
-      enlist_pgn_node(&mm->fifo_pgn, pgn + pgit);
+     // enlist_pgn_node(&mm->fifo_pgn, pgn + pgit);
     } else {
       // B1.3 : Trang nam tren RAM -> gan FPN va dua vao fifo_pgn
       pte_set_fpn(mm, pgn + pgit, fpit->fpn, caller);
