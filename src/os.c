@@ -80,9 +80,9 @@ static void * cpu_routine(void * args) {
 		 	* ready queue */
 			proc = get_proc();
 			if (proc == NULL) {
-                           next_slot(timer_id);
-                           continue; /* First load failed. skip dummy load */
-                        }
+				next_slot(timer_id);
+				//continue; /* First load failed. skip dummy load */
+			}
 		}else if (proc->pc == proc->code->size) {
 			/* The porcess has finish it job */
 			printf("\tCPU %d: Processed %2d has finished\n",
@@ -252,11 +252,13 @@ static void * ld_routine(void * args) {
 }
 
 static void read_config(const char * path) {
+	// B1 mo file doc
 	FILE * file;
 	if ((file = fopen(path, "r")) == NULL) {
 		printf("Cannot find configure file at %s\n", path);
 		exit(1);
 	}
+	//B2 Doc time slot , so cpu, so luong
 	fscanf(file, "%d %d %d\n", &time_slot, &num_cpus, &num_processes);
 	ld_processes.path = (char**)malloc(sizeof(char*) * num_processes);
 	ld_processes.start_time = (unsigned long*)
@@ -278,6 +280,7 @@ static void read_config(const char * path) {
 	 * Format: (size=0 result non-used memswap, must have RAM and at least 1 SWAP)
 	 *        MEM_RAM_SZ MEM_SWP0_SZ MEM_SWP1_SZ MEM_SWP2_SZ MEM_SWP3_SZ
 	*/
+	// B3 : Doc memRam , memSwap, 
 	fscanf(file, FORMAT_ARG "\n", &memramsz);
 	for(sit = 0; sit < PAGING_MAX_MMSWP; sit++)
 		fscanf(file, FORMAT_ARG, &(memswpsz[sit])); 
@@ -290,12 +293,13 @@ static void read_config(const char * path) {
 	ld_processes.prio = (unsigned long*)
 		malloc(sizeof(unsigned long) * num_processes);
 #endif
+	//B4 : Doc va luu tru Process
 	int i;
 	for (i = 0; i < num_processes; i++) {
 		ld_processes.path[i] = (char*)malloc(sizeof(char) * 100);
 		ld_processes.path[i][0] = '\0';
 		strcat(ld_processes.path[i], "input/proc/");
-		char proc[100];
+		char proc[100]={0};
 #ifdef MLQ_SCHED
 		fscanf(file, "%lu %s %lu\n", &ld_processes.start_time[i], proc, &ld_processes.prio[i]);
 #else

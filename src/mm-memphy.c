@@ -27,7 +27,7 @@
  */
 int MEMPHY_mv_csr(struct memphy_struct *mp, addr_t offset)
 {
-   if (mp == NULL || offset >= (addr_t)mp->maxsz)
+   if (mp == NULL || offset >= (addr_t)mp->maxsz || mp->storage==NULL)
       return -1;
    int numstep = 0;
 
@@ -50,7 +50,7 @@ int MEMPHY_mv_csr(struct memphy_struct *mp, addr_t offset)
  */
 int MEMPHY_seq_read(struct memphy_struct *mp, addr_t addr, BYTE *value)
 {
-   if (mp == NULL || value == NULL || addr >= (addr_t)mp->maxsz)
+   if (mp == NULL || value == NULL || addr >= (addr_t)mp->maxsz|| mp->storage==NULL)
       return -1;
 
    if (mp->rdmflg ==1 )
@@ -71,7 +71,7 @@ int MEMPHY_seq_read(struct memphy_struct *mp, addr_t addr, BYTE *value)
 int MEMPHY_read(struct memphy_struct *mp, addr_t addr, BYTE *value)
 {
    //B1 : Kiem tra hop le
-   if (mp == NULL || value == NULL){
+   if (mp == NULL || value == NULL || mp->storage==NULL){
       return -1;
    }
    // B2 : kt gia tri dia chi vat ly
@@ -102,7 +102,7 @@ int MEMPHY_read(struct memphy_struct *mp, addr_t addr, BYTE *value)
 int MEMPHY_seq_write(struct memphy_struct *mp, addr_t addr, BYTE value)
 {
 
-  if (mp == NULL || addr >= (addr_t)mp->maxsz){
+  if (mp == NULL || addr >= (addr_t)mp->maxsz||mp->storage==NULL){
    return -1;
   }
   if (mp->rdmflg)
@@ -124,7 +124,7 @@ int MEMPHY_seq_write(struct memphy_struct *mp, addr_t addr, BYTE value)
 int MEMPHY_write(struct memphy_struct *mp, addr_t addr, BYTE data)
 {
    //B1  : Kiem tra hop le
-   if (mp == NULL){
+   if (mp == NULL ||mp->storage ==NULL){
       return -1;
    }
    // B2 : kt gia tri dia chi vat ly 
@@ -237,6 +237,11 @@ int MEMPHY_get_freefp(struct memphy_struct *mp, addr_t *retfpn)
    // B3 :  Co frame free de cap - thi gan vao dau use list
    // Lay frame  
    struct framephy_struct *getFrame =  fp;
+   if(getFrame==NULL) {
+      pthread_mutex_unlock(&mp->lock);
+      return -1; 
+   }
+   
    mp->free_fp_list= getFrame->fp_next;
    getFrame->fp_next =  mp->used_fp_list;
    mp->used_fp_list = getFrame; 
@@ -358,8 +363,15 @@ int MEMPHY_put_freefp(struct memphy_struct *mp, addr_t fpn)
  */
 int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
 {
-   if (mp == NULL || max_size == 0) // <-- THÊM DÒNG NÀY
+   if (mp == NULL )
       return -1;
+   mp->storage = NULL;
+   mp->maxsz = max_size;
+   mp->free_fp_list = NULL;
+   mp->used_fp_list = NULL;
+   pthread_mutex_init(&mp->lock, NULL);
+   if(max_size==0)
+      return 0;
    mp->storage = (BYTE *)malloc(max_size * sizeof(BYTE));
    if(mp->storage==NULL){
       return -1;
