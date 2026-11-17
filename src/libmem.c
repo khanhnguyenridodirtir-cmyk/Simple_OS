@@ -14,7 +14,7 @@
 
 #include "string.h"
 #include "mm64.h"
-#include "syscall.h"
+#include "./include/syscall.h"
 #include "libmem.h"
 #include "dma.h"
 #include "dpi_rtl.h"
