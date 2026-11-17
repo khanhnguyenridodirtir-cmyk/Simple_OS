@@ -25,6 +25,8 @@
 
 static pthread_mutex_t mmvm_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t kmm_lock = PTHREAD_MUTEX_INITIALIZER;
+// prototype tu che de giai phong bo nho
+int free_pcb_memph(struct pcb_t *caller);
 
 #define DMADEBUG
 /*enlist_vm_freerg_list - add new rg to freerg_list
@@ -1224,7 +1226,7 @@ int free_pcb_memph(struct pcb_t *caller)
   }
 
 #ifdef MM64
-  // B2.1: Quet truc tiep bang trang mm->pt (bat buoc phai co cho cac test goi thang vm_map_ram nhu MM18)
+  // B2.1: Quet truc tiep bang trang mm->pt 
   if (mm->pt != NULL)
   {
     for (addr_t pt_idx = 0; pt_idx < 512; pt_idx++)

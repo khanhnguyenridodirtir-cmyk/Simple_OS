@@ -38,27 +38,23 @@ int init_pte(addr_t *pte,
              int swptyp, // swap type
              addr_t swpoff) // swap offset
 {
-  if (pre != 0) {
-    if (swp == 0) { // Non swap ~ page online
-      if (fpn == 0)
-        return -1;  // Invalid setting
+  if(pte==NULL) return -1;
+  *pte=0;
+  if (swp != 0) {
+    // Page nam tre  SWAP 
+    CLRBIT(*pte, PAGING_PTE_PRESENT_MASK);
+    SETBIT(*pte, PAGING_PTE_SWAPPED_MASK);
+    if (drt) SETBIT(*pte, PAGING_PTE_DIRTY_MASK);
 
-      /* Valid setting with FPN */
-      SETBIT(*pte, PAGING_PTE_PRESENT_MASK);
-      CLRBIT(*pte, PAGING_PTE_SWAPPED_MASK);
-      CLRBIT(*pte, PAGING_PTE_DIRTY_MASK);
+    SETVAL(*pte, swptyp, PAGING_PTE_SWPTYP_MASK, PAGING_PTE_SWPTYP_LOBIT);
+    SETVAL(*pte, swpoff, PAGING_PTE_SWPOFF_MASK, PAGING_PTE_SWPOFF_LOBIT);
+  } else if (pre != 0) {
+    // Trang nam tren RAM 
+    SETBIT(*pte, PAGING_PTE_PRESENT_MASK);
+    CLRBIT(*pte, PAGING_PTE_SWAPPED_MASK);
+    if (drt) SETBIT(*pte, PAGING_PTE_DIRTY_MASK);
 
-      SETVAL(*pte, fpn, PAGING_PTE_FPN_MASK, PAGING_PTE_FPN_LOBIT);
-    }
-    else
-    { // page swapped
-      SETBIT(*pte, PAGING_PTE_PRESENT_MASK);
-      SETBIT(*pte, PAGING_PTE_SWAPPED_MASK);
-      CLRBIT(*pte, PAGING_PTE_DIRTY_MASK);
-
-      SETVAL(*pte, swptyp, PAGING_PTE_SWPTYP_MASK, PAGING_PTE_SWPTYP_LOBIT);
-      SETVAL(*pte, swpoff, PAGING_PTE_SWPOFF_MASK, PAGING_PTE_SWPOFF_LOBIT);
-    }
+    SETVAL(*pte, fpn, PAGING_PTE_FPN_MASK, PAGING_PTE_FPN_LOBIT);
   }
 
   return 0;
@@ -164,15 +160,17 @@ int pte_set_fpn(struct mm_struct *mm, addr_t pgn, addr_t fpn, struct pcb_t *call
   addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
   // dummy pte alloc to avoid runtime error
-  pte = malloc(sizeof(addr_t));
+  //pte = malloc(sizeof(addr_t));
 
 #ifdef MM64    
   /* Get value from the system */
+  if(mm->pt==NULL) return -1; 
   get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt);
   
   // Tro pte vao mang pt thong qua con tro mm an toan
   pte = &mm->pt[pt]; 
 #else
+  if(mm->pt==NULL) return -1;
   pte = &mm->pgd[pgn];
 #endif
 
@@ -206,7 +204,22 @@ addr_t pte_get_entry(struct mm_struct *mm, addr_t pgn, struct pcb_t *caller)
   /* Get value from the system */
   if (mm->pt == NULL) return 0;
   get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt);
-  pte = &mm->pt[pt];
+  // int64_t *p4d_tbl = (uint64_t *)(uintptr_t)mm->pgd[pgd];
+  // if (p4d_tbl == NULL) return 0; // (hoặc malloc nếu đang set PTE)
+ 
+  // uint64_t *pud_tbl = (uint64_t *)(uintptr_t)p4d_tbl[p4d];
+  // if (pud_tbl == NULL) return 0;
+ 
+  // uint64_t *pmd_tbl = (uint64_t *)(uintptr_t)pud_tbl[pud];
+  // if (pmd_tbl == NULL) return 0;
+
+  // uint64_t *pt_tbl  = (uint64_t *)(uintptr_t)pmd_tbl[pmd];
+  // if (pt_tbl == NULL) return 0;
+
+  // // 5. Lấy con trỏ tới PTE cuối cùng trong bảng PT
+  // pte = &pt_tbl[pt];
+
+  pte  =&mm->pt[pt];
   
  
 #else
