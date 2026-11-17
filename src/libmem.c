@@ -26,6 +26,7 @@
 static pthread_mutex_t mmvm_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t kmm_lock = PTHREAD_MUTEX_INITIALIZER;
 
+#define DMADEBUG
 /*enlist_vm_freerg_list - add new rg to freerg_list
  *@mm: memory region
  *@rg_elmt: new region
@@ -233,7 +234,10 @@ int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
     return -1;
   }
 #ifdef IODUMP
-  /* TODO dump IO content (if needed) */
+  if (proc->krnl != NULL && proc->krnl->mram != NULL)
+    MEMPHY_dump(proc->krnl->mram);
+    printf("[ALLOC] PID=%d reg=%d -> rg_start=%lu, rg_end=%lu\n",
+       proc->pid, reg_index, proc->mm->symrgtbl[reg_index].rg_start, proc->mm->symrgtbl[reg_index].rg_end);
 #ifdef PAGETBL_DUMP
     print_pgtbl(proc, 0, -1); // print max TBL
 #endif
@@ -258,7 +262,8 @@ int libfree(struct pcb_t *proc, uint32_t reg_index)
   }
 printf("%s:%d\n",__func__,__LINE__);
 #ifdef IODUMP
-  /* TODO dump IO content (if needed) */
+  if (proc->krnl != NULL && proc->krnl->mram != NULL)
+    MEMPHY_dump(proc->krnl->mram);
 #ifdef PAGETBL_DUMP
   print_pgtbl(proc, 0, -1); // print max TBL
 #endif
@@ -575,10 +580,12 @@ int libread(
     return -1;
   }
   // gan gia tri vao data
+
   *destination = (uint8_t)data;
 #ifdef IODUMP
   /* TODO dump IO content (if needed) */
-#ifdef PAGETBL_DUMP
+  printf("[VERIFY READ] PID=%d reg=%d offset=%ld -> val=%d\n", proc->pid, source, offset, data);
+  #ifdef PAGETBL_DUMP
   print_pgtbl(proc, 0, -1); // print max TBL
 #endif
 #endif
@@ -639,8 +646,10 @@ int libwrite(
   {
     return -1;
   }
+  
 #ifdef IODUMP
   /* TODO dump IO content (if needed) */
+  printf("[VERIFY Write] PID=%d reg=%d offset=%ld -> val=%d\n", proc->pid, destination, offset, data);
 #ifdef PAGETBL_DUMP
   print_pgtbl(proc, 0, -1); // print max TBL
 #endif
@@ -857,13 +866,7 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
 }
 
 
-/*libmem_dma_memcpy - DMA memcpy
- *@caller: caller
- *@src: source region
- *@dst: destination region
- *@offset: memory offset
- *@size: copied data size
- */
+
 /* dma_xlat - dich mot dia chi ao sang dia chi vat ly cho DMA
  *
  * DMA la thiet bi tren bus, no khong di qua MMU. Nen truoc khi dua
@@ -880,13 +883,19 @@ static int dma_xlat(struct pcb_t *caller, addr_t vaddr, uint64_t *phyaddr)
   addr_t pgn = vaddr / PAGING64_PAGESZ;
   addr_t off = vaddr % PAGING64_PAGESZ;
 
-  if (pg_getpage(caller->krnl->mm, (int) pgn, &fpn, caller) != 0)
+  if (pg_getpage(caller->mm, (int) pgn, &fpn, caller) != 0)
     return -1;                       /* trang khong hop le */
 
   *phyaddr = (uint64_t) fpn * PAGING64_PAGESZ + off;
   return 0;
 }
-
+/*libmem_dma_memcpy - DMA memcpy
+ *@caller: caller
+ *@src: source region
+ *@dst: destination region
+ *@offset: memory offset
+ *@size: copied data size
+ */
 int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t offset, uint32_t size)
 {
   uint64_t sphy = 0, dphy = 0;
@@ -910,17 +919,21 @@ int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t
    * DMA ghi len chinh frame cua rg1. */
   if (srcrg->rg_end <= srcrg->rg_start ||
       (addr_t) offset + size > srcrg->rg_end - srcrg->rg_start) {
+#ifdef DMADEBUG
     printf("libmem_dma_memcpy: PID %u rg%u chua cap phat hoac copy vuot bien "
            "[%lu,%lu)\n", caller->pid, src,
            (unsigned long) srcrg->rg_start, (unsigned long) srcrg->rg_end);
-    return -1;
+#endif
+           return -1;
   }
   if (dstrg->rg_end <= dstrg->rg_start ||
       (addr_t) offset + size > dstrg->rg_end - dstrg->rg_start) {
+#ifdef DMADEBUG
     printf("libmem_dma_memcpy: PID %u rg%u chua cap phat hoac copy vuot bien "
            "[%lu,%lu)\n", caller->pid, dst,
            (unsigned long) dstrg->rg_start, (unsigned long) dstrg->rg_end);
-    return -1;
+#endif
+           return -1;
   }
 
   /* --- 2. dia chi ao -> dia chi vat ly ----------------------------
@@ -929,9 +942,10 @@ int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t
    * thay vi dua dia chi rac cho phan cung. */
   if (dma_xlat(caller, srcrg->rg_start + offset, &sphy) != 0 ||
       dma_xlat(caller, dstrg->rg_start + offset, &dphy) != 0) {
-    printf("libmem_dma_memcpy: chua dich duoc dia chi "
-           "(bang trang cua TV2 chua san sang)\n");
-    return -1;
+#ifdef DMADEBUG
+        printf("libmem_dma_memcpy: chua dich duoc dia chi \n");
+#endif
+        return -1;
   }
 
   /* --- 3. lam tron kich thuoc len boi so 4 ------------------------
@@ -944,13 +958,16 @@ int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t
    * se cap nhip clock va thu ket qua o cac time slot sau. */
   int rc = do_dma_start(caller, sphy, dphy, (uint64_t) len);
   if (rc < 0) {
+#ifdef DMADEBUG
     printf("libmem_dma_memcpy: offset ngoai mien hoac hang doi DMA day\n");
+#endif
     return -1;
   }
-
+#ifdef DMADEBUG
   printf("\tDMA: PID %u %s rg%u -> rg%u, %u byte (lam tron %u), CPU chay tiep\n",
          caller->pid, rc == 0 ? "nap lenh" : "kenh ban, XEP HANG",
          src, dst, size, len);
+#endif
   return 0;
 }
 
