@@ -369,9 +369,9 @@ int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
    mp->maxsz = max_size;
    mp->free_fp_list = NULL;
    mp->used_fp_list = NULL;
-   pthread_mutex_init(&mp->lock, NULL);
-   if(max_size==0)
-      return 0;
+   
+   if(max_size<=0)
+      return -1;
    mp->storage = (BYTE *)malloc(max_size * sizeof(BYTE));
    if(mp->storage==NULL){
       return -1;
