@@ -103,7 +103,7 @@ test_memphy: test/test_memphy.c test/test_helpers.c src/mm-memphy.c test/test_he
 test_mm64: test/test_mm64.c test/test_helpers.c src/mm64.c src/mm-memphy.c src/mm-vm.c src/libmem.c src/syscall.c src/sys_mem.c src/sys_listsyscall.c
 	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
 
-test_libmem: test/test_libmem.c test/test_helpers.c src/libmem.c src/mm64.c src/mm-memphy.c src/sys_mem.c src/mm-vm.c
+test_libmem: test/test_libmem.c test/test_helpers.c src/libmem.c src/mm64.c src/mm-memphy.c src/sys_mem.c src/mm-vm.c 
 	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
 test_syscall17: test/test_syscall17.c test/test_helpers.c src/sys_mem.c src/libstd.c src/libmem.c src/mm64.c src/mm-memphy.c src/mm-vm.c
 	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
@@ -165,7 +165,7 @@ $(OBJ):
 
 clean:
 	rm -f $(SRC)/*.lst
-	rm -f $(OBJ)/*.o os sched mem pdg dma_testbench test_memphy test_mm64 test_libmem test_integration_mem *.vcd
+	rm -f $(OBJ)/*.o os sched mem pdg dma_testbench test_* *.vcd
 	rm -rf $(OBJ)
 	
 .PHONY: test
