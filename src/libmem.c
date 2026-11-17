@@ -234,9 +234,8 @@ int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
     return -1;
   }
 #ifdef IODUMP
-  if (proc->krnl != NULL && proc->krnl->mram != NULL)
-    MEMPHY_dump(proc->krnl->mram);
-    printf("[ALLOC] PID=%d reg=%d -> rg_start=%lu, rg_end=%lu\n",
+  if(proc->krnl != NULL && proc->krnl->mram != NULL) MEMPHY_dump(proc->krnl->mram);
+  printf("[ALLOC] PID=%d reg=%d -> rg_start=%lu, rg_end=%lu\n",
        proc->pid, reg_index, proc->mm->symrgtbl[reg_index].rg_start, proc->mm->symrgtbl[reg_index].rg_end);
 #ifdef PAGETBL_DUMP
     print_pgtbl(proc, 0, -1); // print max TBL
@@ -1187,43 +1186,73 @@ int __write_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, B
  */
 int free_pcb_memph(struct pcb_t *caller)
 {
+  // B1 Xac thu du lieu
   if (caller == NULL || caller->krnl == NULL)
     return -1;
 
+  //B1.1 : Lay du lieu can su dung nhu mm, ram swap.
   struct mm_struct *mm = (caller->mm != NULL) ? caller->mm : caller->krnl->mm;
   struct memphy_struct *mram = caller->krnl->mram;
   struct memphy_struct *mswp = caller->krnl->active_mswp;
 
+  //B1.2 Xac thuc
   if (mm == NULL || mram == NULL)
     return -1;
 
   pthread_mutex_lock(&mmvm_lock);
+  // B2: Duyet qua tat ca cac VMA (neu co)
+  struct vm_area_struct *vma = mm->mmap;
+  while (vma != NULL)
+  {
+    addr_t start_pgn = vma->vm_start >> PAGING64_ADDR_PT_SHIFT;
+    addr_t end_pgn   = (vma->vm_end + PAGING64_PAGESZ - 1) >> PAGING64_ADDR_PT_SHIFT;
 
+    for (addr_t pgn = start_pgn; pgn < end_pgn; pgn++)
+    {
+      addr_t pte = pte_get_entry(mm, pgn, caller);
+      if (pte == 0)
+        continue;
+
+      if (PAGING_PAGE_PRESENT(pte))
+        MEMPHY_put_freefp(mram, PAGING_FPN(pte));
+      else if ((pte & PAGING_PTE_SWAPPED_MASK) && mswp != NULL)
+        MEMPHY_put_freefp(mswp, PAGING_SWP(pte));
+
+      pte_set_entry(mm, pgn, 0, caller);
+    }
+    vma = vma->vm_next;
+  }
+
+#ifdef MM64
+  // B2.1: Quet truc tiep bang trang mm->pt (bat buoc phai co cho cac test goi thang vm_map_ram nhu MM18)
+  if (mm->pt != NULL)
+  {
+    for (addr_t pt_idx = 0; pt_idx < 512; pt_idx++)
+    {
+      addr_t pte = mm->pt[pt_idx];
+      if (pte == 0)
+        continue;
+
+      if (PAGING_PAGE_PRESENT(pte))
+        MEMPHY_put_freefp(mram, PAGING_FPN(pte));
+      else if ((pte & PAGING_PTE_SWAPPED_MASK) && mswp != NULL)
+        MEMPHY_put_freefp(mswp, PAGING_SWP(pte));
+
+      mm->pt[pt_idx] = 0;
+    }
+  }
+#endif
+  // B3 : Giai phong nhung pcb dang quan ly
   struct pgn_t *pg = mm->fifo_pgn;
   while (pg != NULL)
   {
-    addr_t pte = pte_get_entry(mm, pg->pgn, caller);
-
-    if (PAGING_PAGE_PRESENT(pte))
-    {
-      MEMPHY_put_freefp(mram, PAGING_FPN(pte));
-    }
-    else if (pte & PAGING_PTE_SWAPPED_MASK)
-    {
-      if (mswp != NULL)
-        MEMPHY_put_freefp(mswp, PAGING_SWP(pte));
-    }
-
-    /* Xóa entry khỏi bảng trang 64-bit để tránh tái sử dụng nhầm */
-    pte_set_entry(mm, pg->pgn, 0, caller);
-
     struct pgn_t *tmp = pg;
     pg = pg->pg_next;
     free(tmp);
   }
-
   mm->fifo_pgn = NULL;
 
+  
   pthread_mutex_unlock(&mmvm_lock);
   return 0;
 }
