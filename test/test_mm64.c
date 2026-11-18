@@ -6,6 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Implement this in mm64.c and declare it in mm.h.
+ * It must recursively free all dynamically allocated child tables.
+ */
+extern int mm_free_page_tables(struct mm_struct *mm);
+
 #define MM_TEST_FRAMES 16
 #define MM_TEST_SWP_FRAMES 16
 
@@ -80,11 +85,10 @@ static void mm_proc_cleanup_tables(struct mm_struct *mm)
         free(vtmp);
     }
 
-    free(mm->pgd);
-    free(mm->p4d);
-    free(mm->pud);
-    free(mm->pmd);
-    free(mm->pt);
+    /* Do not free p4d/pud/pmd/pt as flat arrays.
+     * The 5-level implementation owns a tree of dynamically allocated tables.
+     */
+    mm_free_page_tables(mm);
 }
 
 /* MM01: Khởi tạo MM */
@@ -113,7 +117,7 @@ static void run_mm01(void)
     mm_env_destroy(&env);
 }
 
-/* MM02: Khởi tạo page table 5 cấp */
+/* MM02: Khởi tạo root và tạo nhánh bảng trang khi cần */
 static void run_mm02(void)
 {
     struct mm_test_env env;
@@ -123,21 +127,17 @@ static void run_mm02(void)
     mm_env_init(&env, 4, 4);
     mm_proc_init(&proc, &mm, &env.krnl, 2);
 
+    /* Root PGD must exist after init_mm(). */
     TEST_ASSERT(mm.pgd != NULL);
-    TEST_ASSERT(mm.p4d != NULL);
-    TEST_ASSERT(mm.pud != NULL);
-    TEST_ASSERT(mm.pmd != NULL);
-    TEST_ASSERT(mm.pt != NULL);
 
-    /* Kiểm tra các bảng được zero-init sạch sẽ */
-    int non_zero = 0;
-    for (int i = 0; i < 512; ++i) {
-        if (mm.pgd[i] != 0 || mm.p4d[i] != 0 || mm.pud[i] != 0 ||
-            mm.pmd[i] != 0 || mm.pt[i] != 0) {
-            non_zero++;
-        }
-    }
-    TEST_ASSERT_EQ(0, non_zero);
+    /* An unmapped page must return an empty PTE. */
+    TEST_ASSERT_EQ(0, pte_get_entry(&mm, 0, &proc));
+
+    /* Mapping a page must create the required child-table path. */
+    TEST_ASSERT_EQ(0, pte_set_fpn(&mm, 0, 3, &proc));
+    addr_t pte = pte_get_entry(&mm, 0, &proc);
+    TEST_ASSERT(PAGING_PAGE_PRESENT(pte) != 0);
+    TEST_ASSERT_EQ(3, PAGING_FPN(pte));
 
     mm_proc_cleanup_tables(&mm);
     mm_env_destroy(&env);
@@ -262,7 +262,7 @@ static void run_mm09(void)
     mm_env_destroy(&env);
 }
 
-/* MM10: Đọc lại PTE */
+/* MM10: Đọc lại PTE thông qua API, không phụ thuộc layout nội bộ */
 static void run_mm10(void)
 {
     struct mm_test_env env;
@@ -272,9 +272,11 @@ static void run_mm10(void)
     mm_env_init(&env, 8, 4);
     mm_proc_init(&proc, &mm, &env.krnl, 10);
 
-    pte_set_fpn(&mm, 12, 3, &proc);
+    TEST_ASSERT_EQ(0, pte_set_fpn(&mm, 12, 3, &proc));
     addr_t pte_via_api = pte_get_entry(&mm, 12, &proc);
-    TEST_ASSERT_EQ(mm.pt[12], pte_via_api);
+
+    TEST_ASSERT(PAGING_PAGE_PRESENT(pte_via_api) != 0);
+    TEST_ASSERT_EQ(0, (pte_via_api & PAGING_PTE_SWAPPED_MASK));
     TEST_ASSERT_EQ(3, PAGING_FPN(pte_via_api));
 
     mm_proc_cleanup_tables(&mm);
@@ -598,6 +600,116 @@ static void run_mm20(void)
     mm_env_destroy(&env);
 }
 
+/* Helper: verify two virtual pages keep independent leaf PTEs. */
+static void check_independent_pages(addr_t pgn_a, addr_t pgn_b,
+                                    uint32_t pid)
+{
+    struct mm_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+
+    mm_env_init(&env, 8, 4);
+    mm_proc_init(&proc, &mm, &env.krnl, pid);
+
+    TEST_ASSERT_EQ(0, pte_set_fpn(&mm, pgn_a, 2, &proc));
+    TEST_ASSERT_EQ(0, pte_set_fpn(&mm, pgn_b, 6, &proc));
+
+    addr_t pte_a = pte_get_entry(&mm, pgn_a, &proc);
+    addr_t pte_b = pte_get_entry(&mm, pgn_b, &proc);
+
+    TEST_ASSERT(PAGING_PAGE_PRESENT(pte_a) != 0);
+    TEST_ASSERT(PAGING_PAGE_PRESENT(pte_b) != 0);
+    TEST_ASSERT_EQ(2, PAGING_FPN(pte_a));
+    TEST_ASSERT_EQ(6, PAGING_FPN(pte_b));
+
+    /* Re-read A after writing B: B must not overwrite A. */
+    pte_a = pte_get_entry(&mm, pgn_a, &proc);
+    TEST_ASSERT_EQ(2, PAGING_FPN(pte_a));
+
+    mm_proc_cleanup_tables(&mm);
+    mm_env_destroy(&env);
+}
+
+/* MM21: Same PT index, different PMD index. */
+static void run_mm21(void)
+{
+    check_independent_pages(5, (1ULL << 9) | 5, 21);
+}
+
+/* MM22: Same lower indices, different PUD index. */
+static void run_mm22(void)
+{
+    check_independent_pages(5, (1ULL << 18) | 5, 22);
+}
+
+/* MM23: Same lower indices, different P4D index. */
+static void run_mm23(void)
+{
+    check_independent_pages(5, (1ULL << 27) | 5, 23);
+}
+
+/* MM24: Same lower indices, different PGD index. */
+static void run_mm24(void)
+{
+    check_independent_pages(5, (1ULL << 36) | 5, 24);
+}
+
+/* MM25: Several branches at all five levels coexist in one address space. */
+static void run_mm25(void)
+{
+    struct mm_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+    const addr_t pages[] = {
+        5,
+        (1ULL << 9)  | 5,  /* PMD differs */
+        (1ULL << 18) | 5,  /* PUD differs */
+        (1ULL << 27) | 5,  /* P4D differs */
+        (1ULL << 36) | 5   /* PGD differs */
+    };
+    const addr_t fpns[] = {2, 3, 4, 5, 6};
+
+    mm_env_init(&env, 8, 4);
+    mm_proc_init(&proc, &mm, &env.krnl, 25);
+
+    for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); ++i)
+        TEST_ASSERT_EQ(0, pte_set_fpn(&mm, pages[i], fpns[i], &proc));
+
+    for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); ++i) {
+        addr_t pte = pte_get_entry(&mm, pages[i], &proc);
+        TEST_ASSERT(PAGING_PAGE_PRESENT(pte) != 0);
+        TEST_ASSERT_EQ(fpns[i], PAGING_FPN(pte));
+    }
+
+    mm_proc_cleanup_tables(&mm);
+    mm_env_destroy(&env);
+}
+
+/* MM26: Hierarchical page-table cleanup releases the whole tree. */
+static void run_mm26(void)
+{
+    struct mm_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+
+    mm_env_init(&env, 8, 4);
+    mm_proc_init(&proc, &mm, &env.krnl, 26);
+
+    TEST_ASSERT_EQ(0, pte_set_fpn(&mm, 5, 2, &proc));
+    TEST_ASSERT_EQ(0, pte_set_fpn(&mm, (1ULL << 36) | 5, 6, &proc));
+
+    TEST_ASSERT_EQ(0, mm_free_page_tables(&mm));
+    TEST_ASSERT(mm.pgd == NULL);
+    TEST_ASSERT_EQ(0, pte_get_entry(&mm, 5, &proc));
+    TEST_ASSERT_EQ(0, pte_get_entry(&mm, (1ULL << 36) | 5, &proc));
+
+    /* Cleanup should be safe to call again. */
+    TEST_ASSERT_EQ(0, mm_free_page_tables(&mm));
+
+    mm_proc_cleanup_tables(&mm);
+    mm_env_destroy(&env);
+}
+
 #define RUN_TEST(id, description, function) do { \
     test_begin((id), (description)); \
     function(); \
@@ -626,6 +738,12 @@ int main(void)
     RUN_TEST("MM18", "Release all MM resources (RAM, SWAP, PTE, FIFO)", run_mm18);
     RUN_TEST("MM19", "Reject invalid pointers and unaligned kernel mapping", run_mm19);
     RUN_TEST("MM20", "Concurrent page mapping across multiple processes", run_mm20);
+    RUN_TEST("MM21", "Same PT index but different PMD index", run_mm21);
+    RUN_TEST("MM22", "Same lower indices but different PUD index", run_mm22);
+    RUN_TEST("MM23", "Same lower indices but different P4D index", run_mm23);
+    RUN_TEST("MM24", "Same lower indices but different PGD index", run_mm24);
+    RUN_TEST("MM25", "Multiple branches across all five levels", run_mm25);
+    RUN_TEST("MM26", "Free the hierarchical page-table tree", run_mm26);
 
     test_summary();
     return 0;
