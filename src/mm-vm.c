@@ -161,18 +161,14 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
   if (validate_overlap_vm_area(caller, vmaid, old_sbrk, new_sbrk) < 0)
     return -1;
 
-  // 3. Kiem tra gioi han so luong trang toi da (512 entries) truoc khi cap phat
-  if (new_sbrk / PAGING64_PAGESZ > 512)
-    return -1;
-  
-  // 4. Luu lai gioi han cu de phuc hoi (rollback) neu buoc anh xa RAM ben duoi that bai
+  // 3. Luu lai gioi han cu de phuc hoi (rollback) neu buoc anh xa RAM ben duoi that bai
   addr_t old_vm_end = cur_vma->vm_end;
   if (new_sbrk > cur_vma->vm_end)
   {
     cur_vma->vm_end = new_sbrk;
   }
 
-  // 5. Cap phat khung trang vat ly (RAM) va anh xa ngay vao bang phan trang (PTE)
+  // 4. Cap phat khung trang vat ly (RAM) va anh xa ngay vao bang phan trang (PTE)
   struct vm_rg_struct ret_rg;
   if (vm_map_ram(caller, cur_vma->vm_start, cur_vma->vm_end, old_sbrk, incpgnum, &ret_rg) == (addr_t)-1)
   {
@@ -180,10 +176,10 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
     return -1;
   }
 
-  // 6. Cap nhat dinh sbrk moi
+  // 5. Cap nhat dinh sbrk moi
   cur_vma->sbrk = new_sbrk;
 
-  // 7. Dong goi vung nho vua duoc mo rong thanh mot free region node 
+  // 6. Dong goi vung nho vua duoc mo rong thanh mot free region node 
   // va dua vao danh sach quan ly vung trong
   struct vm_rg_struct *new_freerg = init_vm_rg(old_sbrk, new_sbrk);
   if (new_freerg == NULL)

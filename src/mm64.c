@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <stdint.h> // De dung kieu uintptr_t an toan khi ep kieu dia chi bang trang
 
 #if defined(MM64)
 
@@ -97,12 +98,48 @@ int get_pd_from_pagenum(addr_t pgn, addr_t* pgd, addr_t* p4d, addr_t* pud, addr_
                          pgd,p4d,pud,pmd,pt);
 }
 
-/* Helper để truy xuất PTE một cách an toàn mà không leak memory */
-static addr_t* get_pte_ptr(struct mm_struct *mm, addr_t pgn) {
-    /* Trong bài tập lớn, để tối ưu và tránh lỗi phân mảnh cấu trúc đa tầng, 
-       chúng ta ánh xạ trực tiếp trên mảng pgd của tiến trình như 1 flat page table 
-       có kích thước phù hợp với test case. */
-    return &mm->pgd[pgn];
+/* Ham phu tro lay hoac cap phat bang phan trang tang ke tiep */
+static uint64_t* next_pgtbl(uint64_t *tbl, addr_t idx, int alloc)
+{
+  if (tbl[idx] == 0) {
+    if (!alloc) return NULL;
+    uint64_t *new_tbl = (uint64_t *)calloc(PAGING64_PGB_SZ, sizeof(uint64_t));
+    if (new_tbl == NULL) return NULL;
+    tbl[idx] = (uint64_t)(uintptr_t)new_tbl;
+  }
+  return (uint64_t *)(uintptr_t)tbl[idx];
+}
+
+/* Duyet du 5 cap PGD -> P4D -> PUD -> PMD -> PT de lay con tro PTE
+ * alloc = 1: tu dong cap phat bang con neu chua ton tai (dung cho ham set/map)
+ * alloc = 0: chi doc, tra ve NULL neu chua duoc map (dung cho ham get)
+ */
+static addr_t* get_pte_5level(struct mm_struct *mm, addr_t pgn, int alloc)
+{
+  if (mm == NULL || mm->pgd == NULL) return NULL;
+
+  addr_t pgd = 0, p4d = 0, pud = 0, pmd = 0, pt = 0;
+  get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt);
+
+  uint64_t *p4d_tbl = next_pgtbl(mm->pgd, pgd, alloc);
+  if (p4d_tbl == NULL) return NULL;
+
+  uint64_t *pud_tbl = next_pgtbl(p4d_tbl, p4d, alloc);
+  if (pud_tbl == NULL) return NULL;
+
+  uint64_t *pmd_tbl = next_pgtbl(pud_tbl, pud, alloc);
+  if (pmd_tbl == NULL) return NULL;
+
+  uint64_t *pt_tbl  = next_pgtbl(pmd_tbl, pmd, alloc);
+  if (pt_tbl == NULL) return NULL;
+
+  /* Cap nhat con tro tham chieu de print_pgtbl hien thi dung dia chi cac tang */
+  mm->p4d = p4d_tbl;
+  mm->pud = pud_tbl;
+  mm->pmd = pmd_tbl;
+  mm->pt  = pt_tbl;
+
+  return &pt_tbl[pt];
 }
 
 /*
@@ -120,14 +157,9 @@ int pte_set_swap(struct pcb_t *caller, addr_t pgn, int swptyp, addr_t swpoff)
   addr_t *pte = NULL;
   addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
-  // dummy pte alloc to avoid runtime error
-  //pte = malloc(sizeof(addr_t));
-
 #ifdef MM64    
-  /* Get value from the system */
-  if (mm->pt == NULL) return -1;
-  get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt);
-  pte = &mm->pt[pt];
+  pte = get_pte_5level(mm, pgn, 1);
+  if (pte == NULL) return -1;
 #else
   if (mm->pgd == NULL) return -1;
   pte = &mm->pgd[pgn];
@@ -159,18 +191,11 @@ int pte_set_fpn(struct mm_struct *mm, addr_t pgn, addr_t fpn, struct pcb_t *call
   addr_t *pte = NULL;
   addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
-  // dummy pte alloc to avoid runtime error
-  //pte = malloc(sizeof(addr_t));
-
 #ifdef MM64    
-  /* Get value from the system */
-  if(mm->pt==NULL) return -1; 
-  get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt);
-  
-  // Tro pte vao mang pt thong qua con tro mm an toan
-  pte = &mm->pt[pt]; 
+  pte = get_pte_5level(mm, pgn, 1);
+  if (pte == NULL) return -1;
 #else
-  if(mm->pt==NULL) return -1;
+  if (mm->pgd == NULL) return -1;
   pte = &mm->pgd[pgn];
 #endif
 
@@ -197,31 +222,9 @@ addr_t pte_get_entry(struct mm_struct *mm, addr_t pgn, struct pcb_t *caller)
   addr_t *pte = NULL;
   addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
-  // dummy pte alloc to avoid runtime error
-  
-
 #ifdef MM64    
-  /* Get value from the system */
-  if (mm->pt == NULL) return 0;
-  get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt);
-  // int64_t *p4d_tbl = (uint64_t *)(uintptr_t)mm->pgd[pgd];
-  // if (p4d_tbl == NULL) return 0; // (hoặc malloc nếu đang set PTE)
- 
-  // uint64_t *pud_tbl = (uint64_t *)(uintptr_t)p4d_tbl[p4d];
-  // if (pud_tbl == NULL) return 0;
- 
-  // uint64_t *pmd_tbl = (uint64_t *)(uintptr_t)pud_tbl[pud];
-  // if (pmd_tbl == NULL) return 0;
-
-  // uint64_t *pt_tbl  = (uint64_t *)(uintptr_t)pmd_tbl[pmd];
-  // if (pt_tbl == NULL) return 0;
-
-  // // 5. Lấy con trỏ tới PTE cuối cùng trong bảng PT
-  // pte = &pt_tbl[pt];
-
-  pte  =&mm->pt[pt];
-  
- 
+  pte = get_pte_5level(mm, pgn, 0);
+  if (pte == NULL) return 0;
 #else
   if (mm->pgd == NULL) return 0;
   pte = &mm->pgd[pgn];
@@ -243,16 +246,11 @@ int pte_set_entry(struct mm_struct *mm, addr_t pgn, uint64_t pte_val, struct pcb
   addr_t *pte = NULL;
   addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
-  // dummy pte alloc to avoid runtime error
-  
-
 #ifdef MM64    
-  /* Get value from the system */
-  if (mm->pt == NULL) return -1;
-  get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt);
-  pte = &mm->pt[pt]; 
+  pte = get_pte_5level(mm, pgn, 1);
+  if (pte == NULL) return -1;
 #else
-  if (mm->pt == NULL) return 0;
+  if (mm->pgd == NULL) return -1;
   pte = &mm->pgd[pgn];
 #endif
 
@@ -279,13 +277,9 @@ int vmap_pgd_memset(struct pcb_t *caller,           // process call
   // 3. Lap qua pgnum trang và set pattern
   uint64_t pattern = 0xdeadbeef;
   for (int pgit = 0; pgit < pgnum; pgit++) {
-    addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
-    
-    // Tinh toan cac index phan trang
-    get_pd_from_pagenum(start_pgn + pgit, &pgd, &p4d, &pud, &pmd, &pt);
-    
-    // Gan pattern vao bang phan trang
-    mm->pt[pt] = pattern;
+    addr_t *pte = get_pte_5level(mm, start_pgn + pgit, 1);
+    if (pte == NULL) return -1;
+    *pte = pattern;
   }
 
   return 0;
@@ -625,19 +619,11 @@ int init_mm(struct mm_struct *mm, struct pcb_t *caller)
   struct vm_area_struct *vma0 = malloc(sizeof(struct vm_area_struct));
 
   /* init page table directory */
-  mm->pgd = (uint64_t *)malloc(sizeof(uint64_t) * PAGING64_PGB_SZ);
-  mm->p4d = (uint64_t *)malloc(sizeof(uint64_t) * PAGING64_PGB_SZ);
-  mm->pud = (uint64_t *)malloc(sizeof(uint64_t) * PAGING64_PGB_SZ);
-  mm->pmd = (uint64_t *)malloc(sizeof(uint64_t) * PAGING64_PGB_SZ);
-  mm->pt  = (uint64_t *)malloc(sizeof(uint64_t) * PAGING64_PGB_SZ);
-
-  for (int i = 0; i < PAGING64_PGB_SZ; i++) {
-    mm->pgd[i] = 0;
-    mm->p4d[i] = 0;
-    mm->pud[i] = 0;
-    mm->pmd[i] = 0;
-    mm->pt[i]  = 0;
-  }
+  mm->pgd = (uint64_t *)calloc(PAGING64_PGB_SZ, sizeof(uint64_t));
+  mm->p4d = NULL;
+  mm->pud = NULL;
+  mm->pmd = NULL;
+  mm->pt  = NULL;
 
   /* By default the owner comes with at least one vma */
   vma0->vm_id = 0;
