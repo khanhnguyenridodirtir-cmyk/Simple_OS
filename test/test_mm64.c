@@ -6,11 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Implement this in mm64.c and declare it in mm.h.
- * It must recursively free all dynamically allocated child tables.
- */
-extern int mm_free_page_tables(struct mm_struct *mm);
-
 #define MM_TEST_FRAMES 16
 #define MM_TEST_SWP_FRAMES 16
 
@@ -710,6 +705,28 @@ static void run_mm26(void)
     mm_env_destroy(&env);
 }
 
+
+/* MM27: Reject virtual addresses/page numbers outside the 57-bit address space. */
+static void run_mm27(void)
+{
+    addr_t pgd = 0, p4d = 0, pud = 0, pmd = 0, pt = 0;
+    TEST_ASSERT_EQ(-1, get_pd_from_address((addr_t)1ULL << 57,
+                                           &pgd, &p4d, &pud, &pmd, &pt));
+    TEST_ASSERT_EQ(-1, get_pd_from_pagenum(PAGING64_MAX_PGN,
+                                           &pgd, &p4d, &pud, &pmd, &pt));
+    TEST_ASSERT_EQ((addr_t)1ULL << 45, PAGING64_MAX_PGN);
+
+    struct mm_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+    mm_env_init(&env, 2, 1);
+    mm_proc_init(&proc, &mm, &env.krnl, 27);
+    TEST_ASSERT_EQ(-1, pte_set_fpn(&mm, PAGING64_MAX_PGN, 0, &proc));
+    TEST_ASSERT_EQ(0, pte_get_entry(&mm, PAGING64_MAX_PGN, &proc));
+    mm_proc_cleanup_tables(&mm);
+    mm_env_destroy(&env);
+}
+
 #define RUN_TEST(id, description, function) do { \
     test_begin((id), (description)); \
     function(); \
@@ -744,6 +761,7 @@ int main(void)
     RUN_TEST("MM24", "Same lower indices but different PGD index", run_mm24);
     RUN_TEST("MM25", "Multiple branches across all five levels", run_mm25);
     RUN_TEST("MM26", "Free the hierarchical page-table tree", run_mm26);
+    RUN_TEST("MM27", "Reject virtual addresses outside the 57-bit address space", run_mm27);
 
     test_summary();
     return 0;

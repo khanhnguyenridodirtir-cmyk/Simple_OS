@@ -529,7 +529,7 @@ addr_t vm_map_kernel(struct pcb_t *caller, addr_t astart, addr_t aend,
 
   struct mm_struct *kmm = caller->krnl->mm;
   addr_t first_pgn = mapstart >> PAGING64_ADDR_PT_SHIFT;
-  if (kmm->pgd == NULL || first_pgn + (addr_t)incpgnum > PAGING_MAX_PGN)
+  if (kmm->pgd == NULL || first_pgn + (addr_t)incpgnum > PAGING64_MAX_PGN)
     return -1;
 
   // B2: Cap phat truoc tat ca frame RAM; neu thieu thi rollback

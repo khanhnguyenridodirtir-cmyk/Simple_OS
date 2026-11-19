@@ -280,7 +280,7 @@ printf("%s:%d\n",__func__,__LINE__);
  *
  */
 
-int pg_getpage(struct mm_struct *mm, int pgn, int *fpn, struct pcb_t *caller)
+int pg_getpage(struct mm_struct *mm, addr_t pgn, int *fpn, struct pcb_t *caller)
 {
 #ifdef MM64
     #define MAXPG PAGING64_MAX_PGN
@@ -444,7 +444,7 @@ int pg_getpage(struct mm_struct *mm, int pgn, int *fpn, struct pcb_t *caller)
  *@value: value
  *
  */
-int pg_getval(struct mm_struct *mm, int addr, BYTE *data, struct pcb_t *caller)
+int pg_getval(struct mm_struct *mm, addr_t addr, BYTE *data, struct pcb_t *caller)
 {
   if (mm == NULL || data == NULL || caller == NULL || caller->krnl == NULL)
     return -1;
@@ -493,7 +493,7 @@ int pg_getval(struct mm_struct *mm, int addr, BYTE *data, struct pcb_t *caller)
  *@value: value
  *
  */
-int pg_setval(struct mm_struct *mm, int addr, BYTE value, struct pcb_t *caller)
+int pg_setval(struct mm_struct *mm, addr_t addr, BYTE value, struct pcb_t *caller)
 {
   //B1 :  Xac dinh input hop le
   if (mm == NULL || caller == NULL || caller->krnl == NULL)
@@ -675,7 +675,7 @@ static int get_free_vmrg_area_mm(struct mm_struct *mm, int vmaid, addr_t size,
   if (vma == NULL)
     return -1;
 
-  // B2: Tim first-fit region trong free list
+  // B2: Tim first-fit region vung ma no khop voi size dang muon cap trong free list
   struct vm_rg_struct *node = vma->vm_freerg_list;
   while (node != NULL)
   {
@@ -722,6 +722,7 @@ static int validate_mem_region(struct mm_struct *mm, int vmaid, int rgid,
     return -1;
   struct vm_rg_struct *region = get_symrg_byid(mm, rgid);
   struct vm_area_struct *vma = get_vma_by_num(mm, vmaid);
+  
   if (region == NULL || vma == NULL ||
       (region->rg_start == 0 && region->rg_end == 0) ||
       region->rg_start >= region->rg_end)
@@ -1180,6 +1181,43 @@ int __write_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, B
   return ret;
 }
 
+#ifdef MM64
+/* Walk every leaf PT in the 5-level tree and return its RAM/SWAP frames.
+  Giai phong page table frame - giai phong cac page tren page table.
+*/
+static void release_pgtbl_frames(addr_t *table, int level,
+                                 struct memphy_struct *mram,
+                                 struct memphy_struct *mswp)
+{
+  //B1: Xac nhan du lieu co dung chuan ko
+  if (table == NULL) return;
+
+  if (level == 1) {
+    for (size_t i = 0; i < 512; ++i) {
+      addr_t pte = table[i];
+      if (pte == 0) continue;
+      // Co page va dang o ram
+      if (PAGING_PAGE_PRESENT(pte))
+        MEMPHY_put_freefp(mram, PAGING_FPN(pte));
+      else if ((pte & PAGING_PTE_SWAPPED_MASK) && mswp != NULL)
+      // No o swap
+        MEMPHY_put_freefp(mswp, PAGING_SWP(pte));
+
+      table[i] = 0;
+    }
+    return;
+  }
+
+  for (size_t i = 0; i < 512; ++i) {
+    if (table[i] != 0) {
+      // Goi de quy de giai phong
+      addr_t *child = (addr_t *)(uintptr_t)table[i];
+      release_pgtbl_frames(child, level - 1, mram, mswp);
+      
+    }
+  }
+}
+#endif
 
 /*free_pcb_memphy - collect all memphy of pcb
  *@caller: caller
@@ -1202,46 +1240,29 @@ int free_pcb_memph(struct pcb_t *caller)
     return -1;
 
   pthread_mutex_lock(&mmvm_lock);
-  // B2: Duyet qua tat ca cac VMA (neu co)
+#ifdef MM64
+  /* Duyet toan bo cay PGD -> P4D -> PUD -> PMD -> PT.
+   * Cach nay xu ly ca cac mapping duoc tao truc tiep boi vm_map_ram(),
+   * khong phu thuoc mapping co nam trong VMA hay khong.
+   */
+  release_pgtbl_frames(mm->pgd, 5, mram, mswp);
+#else
+  // B2: Duyet qua tat ca cac VMA (co che phan trang 32-bit cu)
   struct vm_area_struct *vma = mm->mmap;
   while (vma != NULL)
   {
-    addr_t start_pgn = vma->vm_start >> PAGING64_ADDR_PT_SHIFT;
-    addr_t end_pgn   = (vma->vm_end + PAGING64_PAGESZ - 1) >> PAGING64_ADDR_PT_SHIFT;
-
-    for (addr_t pgn = start_pgn; pgn < end_pgn; pgn++)
+    addr_t start_pgn = vma->vm_start >> PAGING_ADDR_PGN_LOBIT;
+    addr_t end_pgn = (vma->vm_end + PAGING_PAGESZ - 1) >> PAGING_ADDR_PGN_LOBIT;
+    for (addr_t pgn = start_pgn; pgn < end_pgn; ++pgn)
     {
       addr_t pte = pte_get_entry(mm, pgn, caller);
-      if (pte == 0)
-        continue;
-
-      if (PAGING_PAGE_PRESENT(pte))
-        MEMPHY_put_freefp(mram, PAGING_FPN(pte));
+      if (pte == 0) continue;
+      if (PAGING_PAGE_PRESENT(pte)) MEMPHY_put_freefp(mram, PAGING_FPN(pte));
       else if ((pte & PAGING_PTE_SWAPPED_MASK) && mswp != NULL)
         MEMPHY_put_freefp(mswp, PAGING_SWP(pte));
-
       pte_set_entry(mm, pgn, 0, caller);
     }
     vma = vma->vm_next;
-  }
-
-#ifdef MM64
-  // B2.1: Quet truc tiep bang trang mm->pt 
-  if (mm->pt != NULL)
-  {
-    for (addr_t pt_idx = 0; pt_idx < 512; pt_idx++)
-    {
-      addr_t pte = mm->pt[pt_idx];
-      if (pte == 0)
-        continue;
-
-      if (PAGING_PAGE_PRESENT(pte))
-        MEMPHY_put_freefp(mram, PAGING_FPN(pte));
-      else if ((pte & PAGING_PTE_SWAPPED_MASK) && mswp != NULL)
-        MEMPHY_put_freefp(mswp, PAGING_SWP(pte));
-
-      mm->pt[pt_idx] = 0;
-    }
   }
 #endif
   // B3 : Giai phong nhung pcb dang quan ly
