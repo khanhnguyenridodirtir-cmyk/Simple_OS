@@ -290,7 +290,7 @@ int pg_getpage(struct mm_struct *mm, addr_t pgn, int *fpn, struct pcb_t *caller)
   // B1: Xac dinh tinh hop le cua input
   if (mm == NULL || fpn == NULL || caller == NULL ||
       caller->mm == NULL || caller->krnl == NULL || caller->krnl->mram == NULL ||
-      pgn < 0 || pgn >= MAXPG || mm->pgd == NULL)
+      pgn >= MAXPG || mm->pgd == NULL)
     return -1;
 
   // B2: Xac dinh page table dang thao tac la Kernel hay User
@@ -451,10 +451,10 @@ int pg_getval(struct mm_struct *mm, addr_t addr, BYTE *data, struct pcb_t *calle
     // Phan tich dia chi thanh page num va offset de tim
 
  #ifdef MM64
-  int pgn = addr / PAGING64_PAGESZ;   // Hoặc (addr >> PAGING64_ADDR_PT_SHIFT)
+  addr_t pgn = addr / PAGING64_PAGESZ;   // Hoặc (addr >> PAGING64_ADDR_PT_SHIFT)
   int off = addr % PAGING64_PAGESZ;   // Hoặc (addr & 0xFFF)
 #else
-  int pgn = PAGING_PGN(addr);
+  addr_t pgn = PAGING_PGN(addr);
   int off = PAGING_OFFST(addr);
 #endif
   int fpn;
@@ -500,10 +500,10 @@ int pg_setval(struct mm_struct *mm, addr_t addr, BYTE value, struct pcb_t *calle
     return -1;
   // B2 : phan tich dia chi thanh pgn va offset
 #ifdef MM64
-  int pgn = addr / PAGING64_PAGESZ;   // Hoặc (addr >> PAGING64_ADDR_PT_SHIFT)
+  addr_t pgn = addr / PAGING64_PAGESZ;   // Hoặc (addr >> PAGING64_ADDR_PT_SHIFT)
   int off = addr % PAGING64_PAGESZ;   // Hoặc (addr & 0xFFF)
 #else
-  int pgn = PAGING_PGN(addr);
+  addr_t pgn = PAGING_PGN(addr);
   int off = PAGING_OFFST(addr);
 #endif
   int fpn;
@@ -809,6 +809,7 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
     // B4: Neu khong du, mo rong Kernel VMA theo boi so cua kich thuoc page
 #ifdef MM64
     addr_t page_size = PAGING64_PAGESZ;
+    
 #else
     addr_t page_size = PAGING_PAGESZ;
 #endif
@@ -818,7 +819,7 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
 
     // B4.1: Kiem tra gioi han page table truoc khi cap frame
     if (map_start % page_size != 0 ||
-        map_start / page_size + page_count > PAGING_MAX_PGN)
+        map_start / page_size + page_count > MAXPG)
     {
       pthread_mutex_unlock(&kmm_lock);
       return -1;
@@ -885,7 +886,7 @@ static int dma_xlat(struct pcb_t *caller, addr_t vaddr, uint64_t *phyaddr)
   addr_t pgn = vaddr / PAGING64_PAGESZ;
   addr_t off = vaddr % PAGING64_PAGESZ;
 
-  if (pg_getpage(caller->mm, (int) pgn, &fpn, caller) != 0)
+  if (pg_getpage(caller->mm, (addr_t) pgn, &fpn, caller) != 0)
     return -1;                       /* trang khong hop le */
 
   *phyaddr = (uint64_t) fpn * PAGING64_PAGESZ + off;
@@ -1068,7 +1069,7 @@ int __read_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, 
   }
 
   // B3: Doc byte tu Kernel page table
-  int ret = pg_getval(kmm, (int)(region->rg_start + offset), data, caller);
+  int ret = pg_getval(kmm, (addr_t)(region->rg_start + offset), data, caller);
   pthread_mutex_unlock(&kmm_lock);
   return ret;
 }
@@ -1104,7 +1105,7 @@ int __write_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset,
   }
 
   // B3: Ghi byte vao Kernel page table
-  int ret = pg_setval(kmm, (int)(region->rg_start + offset), value, caller);
+  int ret = pg_setval(kmm, (addr_t)(region->rg_start + offset), value, caller);
   pthread_mutex_unlock(&kmm_lock);
   return ret;
 }
@@ -1140,7 +1141,7 @@ int __read_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BY
   }
 
   // B3: Doc byte tu User page table
-  int ret = pg_getval(caller->mm, (int)(region->rg_start + offset), data, caller);
+  int ret = pg_getval(caller->mm, (addr_t)(region->rg_start + offset), data, caller);
   pthread_mutex_unlock(&mmvm_lock);
   return ret;
 }
@@ -1176,7 +1177,7 @@ int __write_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, B
   }
 
   // B3: Ghi byte vao User page table
-  int ret = pg_setval(caller->mm, (int)(region->rg_start + offset), value, caller);
+  int ret = pg_setval(caller->mm, (addr_t)(region->rg_start + offset), value, caller);
   pthread_mutex_unlock(&mmvm_lock);
   return ret;
 }
@@ -1231,7 +1232,7 @@ int free_pcb_memph(struct pcb_t *caller)
     return -1;
 
   //B1.1 : Lay du lieu can su dung nhu mm, ram swap.
-  struct mm_struct *mm = (caller->mm != NULL) ? caller->mm : caller->krnl->mm;
+  struct mm_struct *mm = caller->mm ;
   struct memphy_struct *mram = caller->krnl->mram;
   struct memphy_struct *mswp = caller->krnl->active_mswp;
 
