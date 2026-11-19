@@ -222,6 +222,7 @@ static void * co_processor(void *arg) {
 
         if (dpi_rtl_dma_state() == DMA_JOB_RUNNING) {
             if (dpi_rtl_dma_tick(DMA_CLK_PER_SLOT)) {
+
                 printf("\tDMA: chuyen xong %u byte sau %llu chu ky clock\n",
                        dpi_rtl_dma_bytes(),
                        (unsigned long long) dpi_rtl_dma_cycles());
@@ -316,7 +317,9 @@ static void * ld_routine(void * args) {
 	proc->mm = (struct mm_struct*)malloc(sizeof(struct mm_struct));
 	// Tuong tu tren
 	if (proc->mm == NULL) {
+
 #define MAINDEBUGCONFIG
+
     	fprintf(stderr,
 			"ERROR: Cannot allocate mm_struct for PID %d\n",
 			proc->pid);
@@ -325,6 +328,7 @@ static void * ld_routine(void * args) {
 	}
 	// Tuong tu khi init cua kernel memmory thi kiem tra luon trang thai tra ve
 	if (init_mm(proc->mm, proc) != 0) {
+
 #ifdef MAINDEBUGCONFIG
 		fprintf(stderr, "ERROR: Cannot initialize mm_struct for PID %d\n",
 				proc->pid);
@@ -333,7 +337,7 @@ static void * ld_routine(void * args) {
 		proc->mm = NULL;
 		exit(EXIT_FAILURE);
 	}
-#endif
+
 		printf("\tLoaded a process at %s, PID: %d PRIO: %ld\n",
 		ld_processes.path[i], proc->pid, ld_processes.prio[i]);
 		add_proc(proc);
@@ -455,36 +459,56 @@ int main(int argc, char * argv[]) {
 
 	/* Create MEM RAM */
 	if (init_memphy(&mram, memramsz, rdmflag) != 0) {
-#ifdef MAINDEBUGCONFIG
-		fprintf(stderr, "ERROR: Cannot initialize MEMRAM\n");
-#endif
+		#ifdef MAINDEBUGCONFIG
+			fprintf(stderr, "ERROR: Cannot initialize MEMRAM\n");
+		#endif
     	exit(EXIT_FAILURE);
 	}
 	int sit=0;
 	for (sit = 0; sit < PAGING_MAX_MMSWP; sit++) {
 		// Co may swap ko su dung thi mepswpsz do se =0 nen rang truoc
 		if (memswpsz[sit] == 0) {
-#ifdef MAINDEBUGCONFIG
-			printf("MEMSWP %d: Not used, skipping\n", sit);
-#endif
+			#ifdef MAINDEBUGCONFIG
+				printf("MEMSWP %d: Not used, skipping\n", sit);
+			#endif
         	memset(&mswp[sit], 0, sizeof(struct memphy_struct));
         	continue;
     	}
 		if (init_memphy(&mswp[sit], memswpsz[sit], rdmflag) != 0) {
-#ifdef MAINDEBUGCONFIG
-			fprintf(stderr, "ERROR: Cannot initialize MEMSWP %d\n", sit);
-#endif
+			#ifdef MAINDEBUGCONFIG
+				fprintf(stderr, "ERROR: Cannot initialize MEMSWP %d\n", sit);
+			#endif
 			exit(EXIT_FAILURE);
 		}
 	}
 	/* In Paging mode, it needs passing the system mem to each PCB through loader*/
 	struct mmpaging_ld_args *mm_ld_args = (struct mmpaging_ld_args*)malloc(sizeof(struct mmpaging_ld_args));
-
+	if (mm_ld_args == NULL) {
+        fprintf(stderr, "ERROR: Cannot allocate mmpaging_ld_args\n");
+        exit(EXIT_FAILURE);
+    }
 	mm_ld_args->timer_id = ld_event;
 	mm_ld_args->mram = (struct memphy_struct *) &mram;
 	mm_ld_args->mswp = (struct memphy_struct**) &mswp;
-	mm_ld_args->active_mswp = (struct memphy_struct *) &mswp[0];
-        mm_ld_args->active_mswp_id = 0;
+	
+	int active_swap_id = -1;
+
+	for (int sit = 0; sit < PAGING_MAX_MMSWP; sit++) {
+		if (memswpsz[sit] > 0) {
+			active_swap_id = sit;
+			break;
+		}
+	}
+
+	if (active_swap_id == -1) {
+		#ifdef MAINDEBUGCINFIG
+			fprintf(stderr, "ERROR: No valid SWAP device\n");
+		#endif
+		exit(EXIT_FAILURE);
+	}
+
+	mm_ld_args->active_mswp = &mswp[active_swap_id];
+	mm_ld_args->active_mswp_id = active_swap_id;
 
 
 #endif
