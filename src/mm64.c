@@ -72,6 +72,13 @@ int init_pte(addr_t *pte,
  */
 int get_pd_from_address(addr_t addr, addr_t* pgd, addr_t* p4d, addr_t* pud, addr_t* pmd, addr_t* pt)
 {
+  if (pgd == NULL || p4d == NULL || pud == NULL || pmd == NULL || pt == NULL)
+		return -1;
+
+	/* Tu choi dia chi ao nam ngoai khong gian 57-bit (2^57) */
+	if (addr >= ((addr_t)1ULL << 57))
+		return -1;
+
 	/* Extract page direactories */
 	*pgd = (addr&PAGING64_ADDR_PGD_MASK)>>PAGING64_ADDR_PGD_LOBIT;
 	*p4d = (addr&PAGING64_ADDR_P4D_MASK)>>PAGING64_ADDR_P4D_LOBIT;
@@ -93,6 +100,10 @@ int get_pd_from_address(addr_t addr, addr_t* pgd, addr_t* p4d, addr_t* pud, addr
  */
 int get_pd_from_pagenum(addr_t pgn, addr_t* pgd, addr_t* p4d, addr_t* pud, addr_t* pmd, addr_t* pt)
 {
+  /* Tu choi so hieu trang vuot qua 2^45 (tranh tran bit khi dich trai 12 bit) */
+	if (pgn >= PAGING64_MAX_PGN)
+		return -1;
+
 	/* Shift the address to get page num and perform the mapping*/
 	return get_pd_from_address(pgn << PAGING64_ADDR_PT_SHIFT,
                          pgd,p4d,pud,pmd,pt);
@@ -119,7 +130,8 @@ static addr_t* get_pte_5level(struct mm_struct *mm, addr_t pgn, int alloc)
   if (mm == NULL || mm->pgd == NULL) return NULL;
 
   addr_t pgd = 0, p4d = 0, pud = 0, pmd = 0, pt = 0;
-  get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt);
+  if (get_pd_from_pagenum(pgn, &pgd, &p4d, &pud, &pmd, &pt) < 0)
+    return NULL;
 
   uint64_t *p4d_tbl = next_pgtbl(mm->pgd, pgd, alloc);
   if (p4d_tbl == NULL) return NULL;
@@ -155,7 +167,6 @@ int pte_set_swap(struct pcb_t *caller, addr_t pgn, int swptyp, addr_t swpoff)
   if (mm == NULL) return -1;
 
   addr_t *pte = NULL;
-  addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
 #ifdef MM64    
   pte = get_pte_5level(mm, pgn, 1);
@@ -189,7 +200,6 @@ int pte_set_fpn(struct mm_struct *mm, addr_t pgn, addr_t fpn, struct pcb_t *call
   if (mm == NULL) return -1;
   
   addr_t *pte = NULL;
-  addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
 #ifdef MM64    
   pte = get_pte_5level(mm, pgn, 1);
@@ -220,7 +230,6 @@ addr_t pte_get_entry(struct mm_struct *mm, addr_t pgn, struct pcb_t *caller)
   if (mm == NULL) return 0;
   
   addr_t *pte = NULL;
-  addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
 #ifdef MM64    
   pte = get_pte_5level(mm, pgn, 0);
@@ -244,7 +253,6 @@ int pte_set_entry(struct mm_struct *mm, addr_t pgn, uint64_t pte_val, struct pcb
   if (mm == NULL) return -1;
   
   addr_t *pte = NULL;
-  addr_t pgd=0, p4d=0, pud=0, pmd=0, pt=0;
 
 #ifdef MM64    
   pte = get_pte_5level(mm, pgn, 1);
@@ -648,6 +656,47 @@ int init_mm(struct mm_struct *mm, struct pcb_t *caller)
   
   // Can thiet cho thuat toan doi trang
   mm->fifo_pgn = NULL;   
+
+  return 0;
+}
+
+/* Ham de quy giai phong cay bang phan trang tu tang `level` tro xuong
+ * level = 5: PGD -> level = 4: P4D -> level = 3: PUD -> level = 2: PMD -> level = 1: PT
+ */
+static void free_pgtbl_level(addr_t *table, int level)
+{
+  if (table == NULL) return;
+
+  /* Neu chua phai tang la cuoi cung (PT - level 1), duyet 512 entry de giai phong bang con */
+  if (level > 1) {
+    for (int i = 0; i < PAGING64_PGB_SZ; i++) {
+      if (table[i] != 0) {
+        addr_t *child_tbl = (addr_t *)(uintptr_t)table[i];
+        free_pgtbl_level(child_tbl, level - 1);
+        table[i] = 0;
+      }
+    }
+  }
+
+  /* Giai phong chinh bang hien tai (sau khi da giai phong het cac bang con ben duoi) */
+  free(table);
+}
+
+/* Giai phong toan bo he thong bang phan trang 5 cap cua tien trinh */
+int mm_free_page_tables(struct mm_struct *mm)
+{
+  if (mm == NULL) return -1;
+
+  if (mm->pgd != NULL) {
+    free_pgtbl_level((addr_t *)mm->pgd, 5);
+  }
+
+  /* Dat tat ca con tro ve NULL de tranh loi dangling pointer */
+  mm->pgd = NULL;
+  mm->p4d = NULL;
+  mm->pud = NULL;
+  mm->pmd = NULL;
+  mm->pt  = NULL;
 
   return 0;
 }

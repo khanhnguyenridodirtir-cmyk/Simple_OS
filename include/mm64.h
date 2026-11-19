@@ -74,4 +74,7 @@
 #define PAGING64_ADDR_OFFST_MASK  GENMASK64(PAGING64_ADDR_OFFST_HIBIT, PAGING64_ADDR_OFFST_LOBIT)
 #define PAGING64_ADDR_OFFST(addr) GETVAL(addr, PAGING64_ADDR_OFFST_MASK, PAGING64_ADDR_OFFST_LOBIT)
 
+int mm_free_page_tables(struct mm_struct *mm);
+int free_pcb_memph(struct pcb_t *proc);
+
 #endif
