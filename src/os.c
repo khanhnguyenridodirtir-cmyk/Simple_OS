@@ -84,10 +84,66 @@ static void * cpu_routine(void * args) {
 				//continue; /* First load failed. skip dummy load */
 			}
 		}else if (proc->pc == proc->code->size) {
-			/* The porcess has finish it job */
-			printf("\tCPU %d: Processed %2d has finished\n",
-				id ,proc->pid);
-			finish_proc(proc);
+			// Nghia la con tro pc nay la tro xong toi lenh cuoi
+			  /* The porcess has finish it job */
+    			printf("\tCPU %d: Processed %2d has finished\n", id ,proc->pid);
+
+    			finish_proc(proc);
+
+#ifdef MM_PAGING
+    #ifdef MM64
+        	
+   		  /* B1: Kiem tra va thu hoi cac physical frame RAM/SWAP */
+        if (proc->mm == NULL) {
+            fprintf(stderr,
+                    "ERROR: Process %d has NULL mm_struct\n",
+                    proc->pid);
+            exit(EXIT_FAILURE);
+        }
+
+        if (free_pcb_memph(proc) != 0) {
+            fprintf(stderr,
+                    "ERROR: Cannot release memory of PID %d\n",
+                    proc->pid);
+            exit(EXIT_FAILURE);
+        }
+
+        /* B2: Giai phong cay page table 5 cap */
+        mm_free_page_tables(proc->mm);
+
+        /* B3: Giai phong cac VMA va free region */
+        struct vm_area_struct *vma = proc->mm->mmap;
+
+        while (vma != NULL) {
+            struct vm_area_struct *next_vma = vma->vm_next;
+
+            struct vm_rg_struct *rg = vma->vm_freerg_list;
+
+            while (rg != NULL) {
+                struct vm_rg_struct *next_rg = rg->rg_next;
+                free(rg);
+                rg = next_rg;
+            }
+
+            free(vma);
+            vma = next_vma;
+        }
+
+        /* B4: Giai phong kernel cache pool (neu co) */
+        free(proc->mm->kcpooltbl);
+
+        /* B5: Giai phong mm_struct */
+        free(proc->mm);
+        proc->mm = NULL;
+    #else
+			free_pcb_memph(proc);
+			if (proc->mm != NULL) {
+				free(proc->mm);
+				proc->mm = NULL;
+			}
+    #endif
+#endif
+
 			free(proc);
 			proc = get_proc();
 			time_left = 0;
@@ -208,7 +264,7 @@ static void * ld_routine(void * args) {
 	int i = 0;
   /* TODO init kernel page table directory */
 #ifdef MM64
-	os.krnl_pgd = (addr_t*)malloc(PAGING64_MAX_PGN * sizeof(addr_t));
+	os.krnl_pgd = NULL;
 	os.krnl_p4d = NULL;
 	os.krnl_pud = NULL;
 	os.krnl_pmd = NULL;
@@ -222,9 +278,32 @@ static void * ld_routine(void * args) {
 	os.mswp = mswp;
 	os.active_mswp = active_mswp;
 	os.mm = (struct mm_struct*)malloc(sizeof(struct mm_struct));
-	init_mm(os.mm, NULL);
+	// Kiem tra cho chac
+	if (os.mm == NULL) {
+#ifdef MAINDEBUGCONFIG
+    	fprintf(stderr, "ERROR: Cannot allocate kernel mm_struct\n");
+#endif
+		exit(EXIT_FAILURE);
+	}
+	// Khoi tao mm cho os va kiem tra luon
+	if (init_mm(os.mm, NULL) != 0) {
+#ifdef MAINDEBUGCONFIG
+		fprintf(stderr, "ERROR: Cannot initialize kernel mm_struct\n");
+#endif
+		free(os.mm);
+		os.mm = NULL;
+		exit(EXIT_FAILURE);
+	}
 	while (i < num_processes) {
 		struct pcb_t * proc = load(ld_processes.path[i]);
+		// Tuong tu tren
+	if (proc == NULL) {
+#ifdef MAINDEBUGCONFIG
+		fprintf(stderr, "ERROR: Cannot load process from %s\n",
+			ld_processes.path[i]);
+#endif
+			exit(EXIT_FAILURE);
+	}
 		proc->krnl = &os;
 
 #ifdef MLQ_SCHED
@@ -235,10 +314,28 @@ static void * ld_routine(void * args) {
 	}
 #ifdef MM_PAGING
 	proc->mm = (struct mm_struct*)malloc(sizeof(struct mm_struct));
-	init_mm(proc->mm, proc);
+	// Tuong tu tren
+	if (proc->mm == NULL) {
+#define MAINDEBUGCONFIG
+    	fprintf(stderr,
+			"ERROR: Cannot allocate mm_struct for PID %d\n",
+			proc->pid);
+#endif
+		exit(EXIT_FAILURE);
+	}
+	// Tuong tu khi init cua kernel memmory thi kiem tra luon trang thai tra ve
+	if (init_mm(proc->mm, proc) != 0) {
+#ifdef MAINDEBUGCONFIG
+		fprintf(stderr, "ERROR: Cannot initialize mm_struct for PID %d\n",
+				proc->pid);
+#endif
+				free(proc->mm);
+		proc->mm = NULL;
+		exit(EXIT_FAILURE);
+	}
 #endif
 		printf("\tLoaded a process at %s, PID: %d PRIO: %ld\n",
-			ld_processes.path[i], proc->pid, ld_processes.prio[i]);
+		ld_processes.path[i], proc->pid, ld_processes.prio[i]);
 		add_proc(proc);
 		free(ld_processes.path[i]);
 		i++;
@@ -246,7 +343,12 @@ static void * ld_routine(void * args) {
 	}
 	free(ld_processes.path);
 	free(ld_processes.start_time);
+#ifdef MLQ_SCHED
+	free(ld_processes.prio);
+	ld_processes.prio=NULL;
+#endif
 	done = 1;
+	
 	detach_event(timer_id);
 	pthread_exit(NULL);
 }
@@ -307,6 +409,8 @@ static void read_config(const char * path) {
 #endif
 		strcat(ld_processes.path[i], proc);
 	}
+	// Doc xong phai dong 
+	fclose(file);
 }
 
 int main(int argc, char * argv[]) {
@@ -350,13 +454,29 @@ int main(int argc, char * argv[]) {
 	struct memphy_struct mswp[PAGING_MAX_MMSWP];
 
 	/* Create MEM RAM */
-	init_memphy(&mram, memramsz, rdmflag);
-
-        /* Create all MEM SWAP */ 
-	int sit;
-	for(sit = 0; sit < PAGING_MAX_MMSWP; sit++)
-	       init_memphy(&mswp[sit], memswpsz[sit], rdmflag);
-
+	if (init_memphy(&mram, memramsz, rdmflag) != 0) {
+#ifdef MAINDEBUGCONFIG
+		fprintf(stderr, "ERROR: Cannot initialize MEMRAM\n");
+#endif
+    	exit(EXIT_FAILURE);
+	}
+	int sit=0;
+	for (sit = 0; sit < PAGING_MAX_MMSWP; sit++) {
+		// Co may swap ko su dung thi mepswpsz do se =0 nen rang truoc
+		if (memswpsz[sit] == 0) {
+#ifdef MAINDEBUGCONFIG
+			printf("MEMSWP %d: Not used, skipping\n", sit);
+#endif
+        	memset(&mswp[sit], 0, sizeof(struct memphy_struct));
+        	continue;
+    	}
+		if (init_memphy(&mswp[sit], memswpsz[sit], rdmflag) != 0) {
+#ifdef MAINDEBUGCONFIG
+			fprintf(stderr, "ERROR: Cannot initialize MEMSWP %d\n", sit);
+#endif
+			exit(EXIT_FAILURE);
+		}
+	}
 	/* In Paging mode, it needs passing the system mem to each PCB through loader*/
 	struct mmpaging_ld_args *mm_ld_args = (struct mmpaging_ld_args*)malloc(sizeof(struct mmpaging_ld_args));
 
@@ -393,10 +513,62 @@ int main(int argc, char * argv[]) {
 	}
 	pthread_join(ld, NULL); 
 	pthread_join(*dma, NULL);
-	// them MEMPHY_destroy de xoa 
-	MEMPHY_destroy(&mram);
+	
+	
 	/* Stop timer */
 	stop_timer();
+
+	#ifdef MM_PAGING
+	/* Giai phong kernel mm_struct */
+	if (os.mm != NULL) {
+
+		/* Giai phong cay page table 5 cap */
+		mm_free_page_tables(os.mm);
+
+		/*  Giai phong cac VMA va free region */
+		struct vm_area_struct *vma = os.mm->mmap;
+
+		while (vma != NULL) {
+			struct vm_area_struct *next_vma = vma->vm_next;
+
+			struct vm_rg_struct *rg = vma->vm_freerg_list;
+
+			while (rg != NULL) {
+				struct vm_rg_struct *next_rg = rg->rg_next;
+				free(rg);
+				rg = next_rg;
+			}
+
+			free(vma);
+			vma = next_vma;
+		}
+
+		/*  Giai phong kernel cache pool neu co */
+		free(os.mm->kcpooltbl);
+
+		/* B4: Giai phong mm_struct */
+		free(os.mm);
+		os.mm = NULL;
+	}
+
+	/* Giai phong tat ca MEM SWAP */
+	for (int sit = 0; sit < PAGING_MAX_MMSWP; sit++) {
+    if (memswpsz[sit] > 0) {
+        MEMPHY_destroy(&mswp[sit]);
+    }
+}
+
+	/* Giai phong MEM RAM */
+	MEMPHY_destroy(&mram);
+
+	/* Giai phong tham so truyen cho loader */
+	free(mm_ld_args);
+#endif
+
+	/* Giai phong cac mang thread va argument */
+	free(cpu);
+	free(dma);
+	free(args);
 
 	return 0;
 
