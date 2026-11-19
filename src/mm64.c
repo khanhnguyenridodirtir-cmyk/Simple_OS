@@ -624,15 +624,30 @@ int __swap_cp_page(struct memphy_struct *mpsrc, addr_t srcfpn,
  */
 int init_mm(struct mm_struct *mm, struct pcb_t *caller)
 {
-  struct vm_area_struct *vma0 = malloc(sizeof(struct vm_area_struct));
+  if(mm==NULL ) return -1;
 
+  
   /* init page table directory */
-  mm->pgd = (uint64_t *)calloc(PAGING64_PGB_SZ, sizeof(uint64_t));
+  mm->pgd = NULL;
   mm->p4d = NULL;
   mm->pud = NULL;
   mm->pmd = NULL;
   mm->pt  = NULL;
+  mm->mmap = NULL;
+  mm->kcpooltbl = NULL;
+  mm->fifo_pgn = NULL;
 
+  struct vm_area_struct *vma0 = malloc(sizeof(struct vm_area_struct));
+
+  if(vma0==NULL) {
+    return -1;
+  }
+   mm->pgd = (uint64_t *)calloc(PAGING64_PGB_SZ, sizeof(uint64_t));
+
+   if (mm->pgd == NULL) {
+    free(vma0);
+    return -1;
+  }
   /* By default the owner comes with at least one vma */
   vma0->vm_id = 0;
   vma0->vm_start = 0;
@@ -642,6 +657,12 @@ int init_mm(struct mm_struct *mm, struct pcb_t *caller)
   // Khoi tao danh sach vung nho rong (free region list)
   vma0->vm_freerg_list = NULL;
   struct vm_rg_struct *first_rg = init_vm_rg(vma0->vm_start, vma0->vm_end);
+    if (first_rg == NULL) {
+    free(mm->pgd);
+    mm->pgd = NULL;
+    free(vma0);
+    return -1;
+  }
   enlist_vm_rg_node(&vma0->vm_freerg_list, first_rg);
 
   /* update VMA0 next */
@@ -704,7 +725,10 @@ int mm_free_page_tables(struct mm_struct *mm)
 struct vm_rg_struct *init_vm_rg(addr_t rg_start, addr_t rg_end)
 {
   struct vm_rg_struct *rgnode = malloc(sizeof(struct vm_rg_struct));
-
+  // Them doan nay se nhin tuong minh hon mot chut
+  if (rgnode == NULL) {
+    return NULL;
+  }
   rgnode->rg_start = rg_start;
   rgnode->rg_end = rg_end;
   rgnode->rg_next = NULL;
@@ -714,6 +738,7 @@ struct vm_rg_struct *init_vm_rg(addr_t rg_start, addr_t rg_end)
 
 int enlist_vm_rg_node(struct vm_rg_struct **rglist, struct vm_rg_struct *rgnode)
 {
+  
   rgnode->rg_next = *rglist;
   *rglist = rgnode;
   
@@ -722,8 +747,11 @@ int enlist_vm_rg_node(struct vm_rg_struct **rglist, struct vm_rg_struct *rgnode)
 
 int enlist_pgn_node(struct pgn_t **plist, addr_t pgn)
 {
+  if(plist==NULL) return -1;
   struct pgn_t *pnode = malloc(sizeof(struct pgn_t));
-
+  if(pnode==NULL) {
+    return -1;
+  }
   pnode->pgn = pgn;
   pnode->pg_next = *plist;
   *plist = pnode;
