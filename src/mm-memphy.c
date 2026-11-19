@@ -32,7 +32,7 @@ int MEMPHY_mv_csr(struct memphy_struct *mp, addr_t offset)
    int numstep = 0;
 
    mp->cursor = 0;
-   while (numstep < offset && numstep < mp->maxsz)
+   while ((addr_t)numstep < offset && numstep < mp->maxsz)
    {
       /* Traverse sequentially */
       mp->cursor = (mp->cursor + 1) % mp->maxsz;
@@ -376,6 +376,7 @@ int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
    if(mp->storage==NULL){
       return -1;
    }
+
    mp->maxsz = max_size;
    memset(mp->storage, 0, max_size * sizeof(BYTE));
 
@@ -385,7 +386,7 @@ int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
     mp->storage = NULL;
     return -1;
    }
-
+   
    int pagze;
 #ifdef MM64
    pagze = PAGING64_PAGESZ;
@@ -393,6 +394,7 @@ int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
    pagze = PAGING_PAGESZ;
 #endif
    int succsesFlg =  MEMPHY_format(mp, pagze);
+   printf("%d",succsesFlg);
    if(succsesFlg==-1){
       // neu ko lam dc coi nhu that bai va hoan tra
       free(mp->storage);
@@ -400,6 +402,7 @@ int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
       pthread_mutex_destroy(&mp->lock);
       return -1;
    }
+   
    mp->rdmflg = (randomflg != 0) ? 1 : 0;
 
    if (!mp->rdmflg) /* Not Ramdom acess device, then it serial device*/
