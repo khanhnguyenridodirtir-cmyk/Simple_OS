@@ -25,3 +25,7 @@ int libkmem_malloc(struct pcb_t*, uint32_t, uint32_t);
 int libkmem_copy_from_user(struct pcb_t*, uint32_t, uint32_t, uint32_t, uint32_t);
 int libkmem_copy_to_user(struct pcb_t*, uint32_t, uint32_t, uint32_t, uint32_t);
 int libmem_dma_memcpy(struct pcb_t*, uint32_t, uint32_t, uint32_t, uint32_t);
+int libmem_dma_inflight(uint32_t pid);
+int libmem_dma_blocked(struct pcb_t *proc);
+int libmem_dma_complete(uint32_t *pid, uint32_t *src_rg, uint32_t *dst_rg,
+                        uint32_t *len);

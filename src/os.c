@@ -27,6 +27,7 @@
 #include "sysbus.h"
 #include "dpi_rtl.h"
 #include "dma.h"
+#include "libmem.h"
 
 static int time_slot;
 static int num_cpus;
@@ -37,6 +38,132 @@ static struct krnl_t os;
  * neu no giu time slot mai ma khong detach thi timer_routine se cho
  * vinh vien va ca he thong treo luc stop_timer(). */
 static volatile int cpu_alive = 0;
+
+/* RAM ma bus DMA noi vao. main() gan TRUOC khi tao thread co_processor
+ * nen thread doc duoc an toan (pthread_create la diem dong bo). */
+static struct memphy_struct *dma_bus_ram = NULL;
+
+/* ===================================================================
+ * Ngat DMA (interrupt) - Section 2.3.1 cua de:
+ *   "When the I/O controller completes the operation ... it generates an
+ *    interrupt. The CPU temporarily suspends the current task, executes
+ *    the interrupt handler to process the I/O result."
+ *
+ * Thiet bi (thread co_processor) bao xong -> dma_irq_raise() bat co ngat.
+ * Moi CPU kiem tra co ngat o RANH GIOI LENH (dau moi vong cpu_routine),
+ * giong CPU that kiem tra chan IRQ sau moi lenh. CPU nao gap truoc thi
+ * nhan ngat va chay dma_irq_handler(); moi ngat chi mot CPU xu ly.
+ *
+ * Khong co cho nao CPU dung cho DMA: neu chua co ngat thi chay tiep.
+ * Chan IRQ cua mach (irq = ch_done & intr_en) khong dung duoc vi RTL
+ * duoc cap gan cung intr_en = 0, nen ta bat ngat khi tick() thay ch_done.
+ * =================================================================== */
+#define DMA_IRQ_MAX 32
+static int             irq_status[DMA_IRQ_MAX];   /* DMA_JOB_DONE / ERROR */
+static unsigned        irq_bytes[DMA_IRQ_MAX];
+static int             irq_head = 0, irq_count = 0;
+static pthread_mutex_t irq_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* phia thiet bi: bat co ngat, tra ve ngay */
+static void dma_irq_raise(int status, unsigned bytes) {
+	pthread_mutex_lock(&irq_lock);
+	if (irq_count < DMA_IRQ_MAX) {
+		int t = (irq_head + irq_count) % DMA_IRQ_MAX;
+		irq_status[t] = status;
+		irq_bytes[t] = bytes;
+		irq_count++;
+	}
+	pthread_mutex_unlock(&irq_lock);
+}
+
+/* Hang cho DMA: process co lenh ke tiep can ket qua DMA nam o day,
+ * KHONG o hang doi MLQ, nen khong ton slot CPU nao. Handler danh thuc.
+ * Process cho van nam trong running_list; put_proc() luc danh thuc se go
+ * no khoi running_list va dua vao dung hang doi MLQ theo prio. */
+#define DMA_WAIT_MAX 64
+static struct pcb_t   *dma_wait[DMA_WAIT_MAX];
+static int             dma_wait_count = 0;
+static pthread_mutex_t dma_wait_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* CPU goi khi libmem_dma_blocked(proc) == 1.
+ * Kiem tra LAI trong khoa: neu handler vua chay xong giua lan kiem tra
+ * truoc va luc nay thi khong duoc ngu (mat tin hieu danh thuc).
+ * tra 1 = da cho ngu, 0 = khong con phai cho (chay tiep duoc) */
+static int dma_wait_park(int cpu, struct pcb_t *proc) {
+	int parked = 0;
+	pthread_mutex_lock(&dma_wait_lock);
+	if (libmem_dma_inflight(proc->pid) > 0 && libmem_dma_blocked(proc)
+	    && dma_wait_count < DMA_WAIT_MAX) {
+		dma_wait[dma_wait_count++] = proc;
+		parked = 1;
+		printf("\tCPU %d: PID %d cho DMA (%s) -> WAITING, CPU chay process khac\n",
+		       cpu, proc->pid,
+		       proc->pc >= proc->code->size ? "het lenh, chua duoc tra frame"
+		                                    : "lenh ke tiep dung vao region DMA");
+	}
+	pthread_mutex_unlock(&dma_wait_lock);
+	return parked;
+}
+
+/* handler goi sau khi go mot job: process nao het phai cho thi ve READY */
+static void dma_wait_wakeup(int cpu) {
+	pthread_mutex_lock(&dma_wait_lock);
+	for (int i = 0; i < dma_wait_count; ) {
+		struct pcb_t *p = dma_wait[i];
+		int still = libmem_dma_inflight(p->pid) > 0 && libmem_dma_blocked(p);
+		if (still) { i++; continue; }
+		put_proc(p);                         /* WAITING -> READY */
+		printf("\tCPU %d: PID %d WAITING -> READY\n", cpu, p->pid);
+		dma_wait[i] = dma_wait[--dma_wait_count];
+	}
+	pthread_mutex_unlock(&dma_wait_lock);
+}
+
+static int dma_irq_pending(void) {
+	pthread_mutex_lock(&irq_lock);
+	int n = irq_count;
+	pthread_mutex_unlock(&irq_lock);
+	return n;
+}
+
+static int dma_wait_any(void) {
+	pthread_mutex_lock(&dma_wait_lock);
+	int n = dma_wait_count;
+	pthread_mutex_unlock(&dma_wait_lock);
+	return n;
+}
+
+/* phia CPU: interrupt handler, xu ly ket qua cua mot lan DMA */
+static void dma_irq_handler(int cpu, int status, unsigned bytes) {
+	uint32_t pid, src, dst, len;
+	if (libmem_dma_complete(&pid, &src, &dst, &len) != 0)
+		return;                         /* ngat gia: khong co job nao */
+	if (status == DMA_JOB_DONE)
+		printf("\tCPU %d: NGAT DMA -> handler: PID %u xong rg%u -> rg%u, "
+		       "%u/%u byte, region duoc mo khoa\n",
+		       cpu, pid, src, dst, bytes, len);
+	else
+		printf("\tCPU %d: NGAT DMA -> handler: PID %u rg%u -> rg%u LOI, "
+		       "bo job, region duoc mo khoa\n", cpu, pid, src, dst);
+	dma_wait_wakeup(cpu);
+}
+
+/* goi o ranh gioi lenh: co ngat thi nhan mot ngat va chay handler */
+static void dma_irq_check(int cpu) {
+	int status = 0, have = 0;
+	unsigned bytes = 0;
+	pthread_mutex_lock(&irq_lock);
+	if (irq_count > 0) {
+		status = irq_status[irq_head];
+		bytes = irq_bytes[irq_head];
+		irq_head = (irq_head + 1) % DMA_IRQ_MAX;
+		irq_count--;
+		have = 1;
+	}
+	pthread_mutex_unlock(&irq_lock);
+	if (have)
+		dma_irq_handler(cpu, status, bytes);
+}
 
 #ifdef MM_PAGING
 static unsigned long memramsz;
@@ -74,6 +201,9 @@ static void * cpu_routine(void * args) {
 	int time_left = 0;
 	struct pcb_t * proc = NULL;
 	while (1) {
+		/* Ranh gioi lenh: co ngat DMA thi chay handler truoc */
+		dma_irq_check(id);
+
 		/* Check the status of current process */
 		if (proc == NULL) {
 			/* No process is running, the we load new process from
@@ -83,7 +213,8 @@ static void * cpu_routine(void * args) {
 				next_slot(timer_id);
 				//continue; /* First load failed. skip dummy load */
 			}
-		}else if (proc->pc == proc->code->size) {
+		}else if (proc->pc == proc->code->size
+			  && libmem_dma_inflight(proc->pid) == 0) {
 			// Nghia la con tro pc nay la tro xong toi lenh cuoi
 			  /* The porcess has finish it job */
     			printf("\tCPU %d: Processed %2d has finished\n", id ,proc->pid);
@@ -156,7 +287,8 @@ static void * cpu_routine(void * args) {
 		}
 		
 		/* Recheck process status after loading new process */
-		if (proc == NULL && done) {
+		if (proc == NULL && done && dma_wait_any() == 0
+		    && dma_irq_pending() == 0) {
 			/* No process to run, exit */
 			printf("\tCPU %d stopped\n", id);
 			break;
@@ -171,6 +303,18 @@ static void * cpu_routine(void * args) {
 			time_left = time_slot;
 		}
 		
+		/* Lenh ke tiep can ket qua DMA (hoac process da het lenh nhung
+		 * DMA van dang ghi vao frame cua no): chi process nay phai doi.
+		 * Tra no ve hang doi, CPU nhuong slot cho process khac. */
+		if (libmem_dma_blocked(proc)) {
+			if (!dma_wait_park(id, proc))
+				continue;     /* DMA vua xong: quay lai dau vong */
+			proc = NULL;          /* RUNNING -> WAITING */
+			time_left = 0;
+			next_slot(timer_id);
+			continue;
+		}
+
 		/* Run current process */
 		run(proc);
 		time_left--;
@@ -204,28 +348,32 @@ static void * co_processor(void *arg) {
         return (void*)1;
     }
 
-    int attached = 0;
+    /* Noi bus vao RAM cua OS ngay tu dau (main da gan dma_bus_ram). */
+    if (dma_bus_ram != NULL && dma_bus_ram->storage != NULL)
+        memory_bank_attach(dma_bus_ram->storage, (size_t) dma_bus_ram->maxsz);
 
     /* Chay toi khi het CPU VA het viec DMA. Process phat lenh DMA roi
      * chay tiep (bat dong bo) nen co the KET THUC truoc khi DMA cua no
      * xong. Neu dung som theo cpu_alive thi job dang chay va cac yeu
      * cau trong hang doi bi bo do giua chung. */
-    while (cpu_alive > 0
+    while (__atomic_load_n(&cpu_alive, __ATOMIC_SEQ_CST) > 0
            || dpi_rtl_dma_state() == DMA_JOB_RUNNING
            || do_dma_pending() > 0) {
-        /* ld_routine() moi la cho gan os.mram, va no chay song song
-         * voi thread nay, nen phai doi den khi co RAM roi moi noi bus. */
-        if (!attached && os.mram != NULL && os.mram->storage != NULL) {
-            memory_bank_attach(os.mram->storage, (size_t) os.mram->maxsz);
-            attached = 1;
-        }
-
         if (dpi_rtl_dma_state() == DMA_JOB_RUNNING) {
-            if (dpi_rtl_dma_tick(DMA_CLK_PER_SLOT)) {
+            /* Cycle stealing: trong nhum DMA_CLK_PER_SLOT chu ky nay DMA
+             * chiem bus RAM, nen giu khoa cua RAM. CPU nao dung MEMPHY luc
+             * nay chi doi het nhum (vai micro giay), KHONG doi ca job. */
+            int fin;
+            if (dma_bus_ram) pthread_mutex_lock(&dma_bus_ram->lock);
+            fin = dpi_rtl_dma_tick(DMA_CLK_PER_SLOT);
+            if (dma_bus_ram) pthread_mutex_unlock(&dma_bus_ram->lock);
+            if (fin) {
+                unsigned bytes = dpi_rtl_dma_bytes();
 
                 printf("\tDMA: chuyen xong %u byte sau %llu chu ky clock\n",
-                       dpi_rtl_dma_bytes(),
-                       (unsigned long long) dpi_rtl_dma_cycles());
+                       bytes, (unsigned long long) dpi_rtl_dma_cycles());
+                /* Bao CPU bang ngat. Thiet bi khong cho CPU xu ly ngat. */
+                dma_irq_raise(dpi_rtl_dma_state(), bytes);
                 /* BAT BUOC: state DONE khong tu ve IDLE, phai ha
                  * ch_enable roi dap them nhip thi mach moi nha kenh. */
                 dpi_rtl_dma_reap();
@@ -529,6 +677,9 @@ int main(int argc, char * argv[]) {
 	}
 
 	/* Run co-processor - co time slot rieng, chay song song voi CPU */
+#ifdef MM_PAGING
+	dma_bus_ram = &mram;
+#endif
 	pthread_create(dma, NULL, co_processor, (void*)dma_event);
 
 	/* Wait for CPU and loader finishing */

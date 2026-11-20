@@ -870,6 +870,120 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
 
 
 
+/* ===================================================================
+ * Bang job DMA dang bay (in-flight) cua cac process
+ * -------------------------------------------------------------------
+ * CPU phat lenh DMA roi chay tiep (bat dong bo). Nhung region nguon va
+ * dich van dang bi mach doc/ghi, nen process KHONG duoc:
+ *   - doc/ghi/free region DICH truoc khi DMA xong  (giong hazard RAW/WAW)
+ *   - ghi/free region NGUON truoc khi DMA xong     (giong hazard WAR)
+ *   - ket thuc va tra frame cho he thong khi con DMA dang ghi vao do
+ * Ta chi chan DUNG process do (dua no ve hang doi), CPU van chay process
+ * khac. Job duoc go khoi bang trong interrupt handler (os.c) khi DMA xong.
+ *
+ * Mach chi co mot kenh, yeu cau vao hang FIFO, nen job xong theo dung
+ * thu tu nap. Vi the bang cung la FIFO: nap o duoi, xong lay o dau.
+ * =================================================================== */
+#define DMA_JOB_MAX 32          /* >= hang doi 16 + 1 job dang chay */
+
+struct dma_job {
+  uint32_t pid;
+  uint32_t src_rg, dst_rg;      /* region id trong symrgtbl cua process */
+  uint32_t len;
+};
+
+static struct dma_job  dma_jobs[DMA_JOB_MAX];
+static int             dma_job_head = 0, dma_job_count = 0;
+static pthread_mutex_t dma_job_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* so job DMA chua xong cua mot process */
+int libmem_dma_inflight(uint32_t pid)
+{
+  int n = 0;
+  pthread_mutex_lock(&dma_job_lock);
+  for (int i = 0; i < dma_job_count; i++)
+    if (dma_jobs[(dma_job_head + i) % DMA_JOB_MAX].pid == pid)
+      n++;
+  pthread_mutex_unlock(&dma_job_lock);
+  return n;
+}
+
+/* lenh sap chay co dung vao region dang co DMA khong?
+ *   rd = region lenh se doc, wr = region lenh se ghi/free (-1 = khong co) */
+static int dma_conflict(uint32_t pid, int rd, int wr)
+{
+  for (int i = 0; i < dma_job_count; i++) {
+    struct dma_job *j = &dma_jobs[(dma_job_head + i) % DMA_JOB_MAX];
+    if (j->pid != pid) continue;
+    /* region dich: doc hay ghi deu phai doi */
+    if ((rd >= 0 && (uint32_t) rd == j->dst_rg) ||
+        (wr >= 0 && (uint32_t) wr == j->dst_rg) ||
+        /* region nguon: doc thi duoc, ghi/free thi phai doi */
+        (wr >= 0 && (uint32_t) wr == j->src_rg))
+      return 1;
+  }
+  return 0;
+}
+
+/*
+ * libmem_dma_blocked - process co phai doi DMA truoc lenh ke tiep khong
+ * Goi tu cpu_routine() TRUOC run(). Tra 1 = chua duoc chay: CPU dua
+ * process sang trang thai cho (waiting) va chay process khac.
+ */
+int libmem_dma_blocked(struct pcb_t *proc)
+{
+  if (proc == NULL || proc->code == NULL)
+    return 0;
+
+  int blocked = 0;
+
+  pthread_mutex_lock(&dma_job_lock);
+  if (proc->pc >= proc->code->size) {
+    /* Het lenh. Khong bao gio run() qua cuoi code: tra 1 de CPU khong
+     * chay. Neu con DMA thi process phai cho; neu het DMA thi vong sau
+     * cpu_routine() se cho no ket thuc binh thuong. */
+    blocked = 1;
+  } else {
+    struct inst_t *ins = &proc->code->text[proc->pc];
+    int rd = -1, wr = -1;
+    switch (ins->opcode) {
+    case READ:           rd = (int) ins->arg_0; break;
+    case WRITE:          wr = (int) ins->arg_1; break;
+    case FREE:           wr = (int) ins->arg_0; break;
+    case ALLOC:          wr = (int) ins->arg_1; break;
+#ifdef MM_PAGING
+    case COPY_FROM_USER: rd = (int) ins->arg_0; break;
+    case COPY_TO_USER:   wr = (int) ins->arg_1; break;
+#endif
+    default: break;                  /* CALC, SYSCALL, DMA_MEMCPY: chay luon */
+    }
+    blocked = dma_conflict(proc->pid, rd, wr);
+  }
+  pthread_mutex_unlock(&dma_job_lock);
+  return blocked;
+}
+
+/*
+ * libmem_dma_complete - interrupt handler goi khi DMA bao xong
+ * Go job dau hang (job xong theo thu tu FIFO) va tra thong tin ve.
+ * tra 0 neu co job, -1 neu bang rong (ngat gia)
+ */
+int libmem_dma_complete(uint32_t *pid, uint32_t *src_rg, uint32_t *dst_rg,
+                        uint32_t *len)
+{
+  int rc = -1;
+  pthread_mutex_lock(&dma_job_lock);
+  if (dma_job_count > 0) {
+    struct dma_job *j = &dma_jobs[dma_job_head];
+    *pid = j->pid; *src_rg = j->src_rg; *dst_rg = j->dst_rg; *len = j->len;
+    dma_job_head = (dma_job_head + 1) % DMA_JOB_MAX;
+    dma_job_count--;
+    rc = 0;
+  }
+  pthread_mutex_unlock(&dma_job_lock);
+  return rc;
+}
+
 /* dma_xlat - dich mot dia chi ao sang dia chi vat ly cho DMA
  *
  * DMA la thiet bi tren bus, no khong di qua MMU. Nen truoc khi dua
@@ -959,7 +1073,24 @@ int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t
    * Day la diem mau chot cua yeu cau "asynchronous": ham nay chay
    * tren thread CPU, no KHONG duoc cho DMA xong. co_processor()
    * se cap nhip clock va thu ket qua o cac time slot sau. */
+  /* Ghi job vao bang va nap lenh trong CUNG mot khoa, de thu tu trong
+   * bang dung bang thu tu mach chay (FIFO). Khoa chi giu trong luc nap
+   * lenh, KHONG giu cho toi khi DMA xong. */
+  pthread_mutex_lock(&dma_job_lock);
+  if (dma_job_count >= DMA_JOB_MAX) {
+    pthread_mutex_unlock(&dma_job_lock);
+    return -1;
+  }
+  int tail = (dma_job_head + dma_job_count) % DMA_JOB_MAX;
   int rc = do_dma_start(caller, sphy, dphy, (uint64_t) len);
+  if (rc >= 0) {
+    dma_jobs[tail].pid = caller->pid;
+    dma_jobs[tail].src_rg = src;
+    dma_jobs[tail].dst_rg = dst;
+    dma_jobs[tail].len = len;
+    dma_job_count++;
+  }
+  pthread_mutex_unlock(&dma_job_lock);
   if (rc < 0) {
 #ifdef DMADEBUG
     printf("libmem_dma_memcpy: offset ngoai mien hoac hang doi DMA day\n");
