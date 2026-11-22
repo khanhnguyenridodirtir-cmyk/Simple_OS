@@ -16,6 +16,13 @@
 #define PAGING_MAX_MMSWP 4 /* max number of supported swapped space */
 #define PAGING_MAX_SYMTBL_SZ 30
 
+#define VMA_SMALL   0
+#define VMA_MEDIUM  1
+#define VMA_LARGE   2
+
+#define SMALL_MAX_SIZE  256
+#define MEDIUM_MAX_SIZE 4096
+
 /* 
  * @bksysnet: in long address mode of 64bit or original 32bit
  * the address type need to be redefined
