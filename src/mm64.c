@@ -642,49 +642,52 @@ int __swap_cp_page(struct memphy_struct *mpsrc, addr_t srcfpn,
  * vm_start/vm_end reserve the virtual-address interval [start, end), while
  * sbrk records how much of that interval has actually been mapped/extended.
  */
-static struct vm_area_struct *create_initial_vma(struct mm_struct *mm,
-                                                  unsigned long vmaid,
-                                                  addr_t start,
-                                                  addr_t end,
-                                                  addr_t initial_sbrk)
+static struct vm_area_struct *create_initial_vma(
+              struct mm_struct *mm,
+              unsigned long vmaid,
+              addr_t start,
+              addr_t end)
 {
-  struct vm_area_struct *vma = NULL;
-  struct vm_rg_struct *empty_rg = NULL;
+    struct vm_area_struct *vma = NULL;
+    struct vm_rg_struct *empty_rg = NULL;
 
-  if (mm == NULL ||
-      start > end ||
-      initial_sbrk < start ||
-      initial_sbrk > end ||
-      (start % PAGING64_PAGESZ) != 0 ||
-      (end % PAGING64_PAGESZ) != 0 ||
-      (initial_sbrk % PAGING64_PAGESZ) != 0 ||
-      end > USER_VA_LIMIT)
-    return NULL;
+    /* Validate input parameters */
+    if (mm == NULL ||
+        start > end ||
+        (start % PAGING64_PAGESZ) != 0 ||
+        (end % PAGING64_PAGESZ) != 0 ||
+        end > USER_VA_LIMIT)
+        return NULL;
 
-  vma = (struct vm_area_struct *)calloc(1, sizeof(*vma));
-  if (vma == NULL)
-    return NULL;
+    /* Allocate VMA structure */
+    vma = (struct vm_area_struct *)calloc(1, sizeof(*vma));
+    if (vma == NULL)
+        return NULL;
 
-  /* The zero-length node preserves the allocator's existing empty-list
-   * convention. inc_vma_limit() will append mapped free ranges later. */
-  empty_rg = init_vm_rg(initial_sbrk, initial_sbrk);
-  if (empty_rg == NULL) {
-    free(vma);
-    return NULL;
-  }
+    /*
+     * Initialize an empty free-region node.
+     * The first allocation starts at vm_start (sbrk).
+     * New free regions will be added when the VMA is extended.
+     */
+    empty_rg = init_vm_rg(start, start);
+    if (empty_rg == NULL) {
+        free(vma);
+        return NULL;
+    }
 
-  empty_rg->vmaid = (int)vmaid;
-  empty_rg->rg_next = NULL;
+    empty_rg->vmaid = (int)vmaid;
+    empty_rg->rg_next = NULL;
 
-  vma->vm_id = vmaid;
-  vma->vm_start = start;
-  vma->vm_end = end;        /* exclusive upper bound of this VMA */
-  vma->sbrk = initial_sbrk; /* nothing in this VMA has been mapped yet */
-  vma->vm_mm = mm;
-  vma->vm_freerg_list = empty_rg;
-  vma->vm_next = NULL;
+    /* Initialize VMA fields */
+    vma->vm_id = vmaid;
+    vma->vm_start = start;
+    vma->vm_end = end;
+    vma->sbrk = start;
+    vma->vm_mm = mm;
+    vma->vm_freerg_list = empty_rg;
+    vma->vm_next = NULL;
 
-  return vma;
+    return vma;
 }
 
 /* Free a partially-created VMA list (used only during init failure). */
@@ -750,7 +753,7 @@ int init_mm(struct mm_struct *mm, struct pcb_t *caller)
   if (caller == NULL) {
     /* Kernel: preserve the original single growable VMA at address zero. */
     struct vm_area_struct *kernel_vma =
-        create_initial_vma(mm, 0, (addr_t)0, (addr_t)0, (addr_t)0);
+        create_initial_vma(mm, 0, (addr_t)0, (addr_t)0);
 
     if (kernel_vma == NULL)
       goto init_fail;
@@ -762,26 +765,10 @@ int init_mm(struct mm_struct *mm, struct pcb_t *caller)
         unsigned long id;
         addr_t start;
         addr_t end;
-        addr_t initial_sbrk;
     } user_layout[] = {
-        {
-            VMA_SMALL,
-            VMA_SMALL_START,
-            VMA_SMALL_END,
-            (addr_t)PAGING64_PAGESZ
-        },
-        {
-            VMA_MEDIUM,
-            VMA_MEDIUM_START,
-            VMA_MEDIUM_END,
-            VMA_MEDIUM_START
-        },
-        {
-            VMA_LARGE,
-            VMA_LARGE_START,
-            VMA_LARGE_END,
-            VMA_LARGE_START
-        }
+        { VMA_SMALL,  VMA_SMALL_START,  VMA_SMALL_END },
+        { VMA_MEDIUM, VMA_MEDIUM_START, VMA_MEDIUM_END },
+        { VMA_LARGE,  VMA_LARGE_START,  VMA_LARGE_END }
     };
     const size_t vma_count = sizeof(user_layout) / sizeof(user_layout[0]);
     size_t vma_index;
@@ -791,8 +778,7 @@ int init_mm(struct mm_struct *mm, struct pcb_t *caller)
           create_initial_vma(mm,
                              user_layout[vma_index].id,
                              user_layout[vma_index].start,
-                             user_layout[vma_index].end,
-                             user_layout[vma_index].initial_sbrk);
+                             user_layout[vma_index].end);
 
       if (new_vma == NULL)
         goto init_fail;
