@@ -26,8 +26,28 @@
 // So luong entry trong moi bang phan trang
 #define PAGING64_PGB_SZ 512   
 #endif
+
+/*
+ * User virtual address space is 57-bit in this simulator.
+ * Keep three non-overlapping address ranges for size-based allocation:
+ *   VMA 0: SMALL   [0, 2^55)
+ *   VMA 1: MEDIUM  [2^55, 2^56)
+ *   VMA 2: LARGE   [2^56, 2^57)
+ *
+ * These are virtual-address reservations only. They do not allocate RAM
+ * during init_mm(); pages are mapped lazily when the VMA is extended.
+ */
+#define USER_VA_LIMIT       ((addr_t)1ULL << 57)
+#define VMA_SMALL_START     ((addr_t)0)
+#define VMA_SMALL_END       ((addr_t)1ULL << 55)
+#define VMA_MEDIUM_START    ((addr_t)1ULL << 55)
+#define VMA_MEDIUM_END      ((addr_t)1ULL << 56)
+#define VMA_LARGE_START     ((addr_t)1ULL << 56)
+#define VMA_LARGE_END       USER_VA_LIMIT
+
 // Danh dau mot trang dang trong trang thai cho bi day ra Swap
-#define PENDING_SWP_FLAG (1ULL << 63)   
+#define PENDING_SWP_FLAG (1ULL << 63)
+
 /*
  * init_pte - Initialize PTE entry
  */
@@ -618,67 +638,184 @@ int __swap_cp_page(struct memphy_struct *mpsrc, addr_t srcfpn,
 }
 
 /*
+ * Create one VMA descriptor and its initially-empty free-region sentinel.
+ * vm_start/vm_end reserve the virtual-address interval [start, end), while
+ * sbrk records how much of that interval has actually been mapped/extended.
+ */
+static struct vm_area_struct *create_initial_vma(struct mm_struct *mm,
+                                                  unsigned long vmaid,
+                                                  addr_t start,
+                                                  addr_t end,
+                                                  addr_t initial_sbrk)
+{
+  struct vm_area_struct *vma = NULL;
+  struct vm_rg_struct *empty_rg = NULL;
+
+  if (mm == NULL ||
+      start > end ||
+      initial_sbrk < start ||
+      initial_sbrk > end ||
+      (start % PAGING64_PAGESZ) != 0 ||
+      (end % PAGING64_PAGESZ) != 0 ||
+      (initial_sbrk % PAGING64_PAGESZ) != 0 ||
+      end > USER_VA_LIMIT)
+    return NULL;
+
+  vma = (struct vm_area_struct *)calloc(1, sizeof(*vma));
+  if (vma == NULL)
+    return NULL;
+
+  /* The zero-length node preserves the allocator's existing empty-list
+   * convention. inc_vma_limit() will append mapped free ranges later. */
+  empty_rg = init_vm_rg(initial_sbrk, initial_sbrk);
+  if (empty_rg == NULL) {
+    free(vma);
+    return NULL;
+  }
+
+  empty_rg->vmaid = (int)vmaid;
+  empty_rg->rg_next = NULL;
+
+  vma->vm_id = vmaid;
+  vma->vm_start = start;
+  vma->vm_end = end;        /* exclusive upper bound of this VMA */
+  vma->sbrk = initial_sbrk; /* nothing in this VMA has been mapped yet */
+  vma->vm_mm = mm;
+  vma->vm_freerg_list = empty_rg;
+  vma->vm_next = NULL;
+
+  return vma;
+}
+
+/* Free a partially-created VMA list (used only during init failure). */
+static void destroy_initial_vmas(struct vm_area_struct *vma)
+{
+  while (vma != NULL) {
+    struct vm_area_struct *next_vma = vma->vm_next;
+    struct vm_rg_struct *rg = vma->vm_freerg_list;
+
+    while (rg != NULL) {
+      struct vm_rg_struct *next_rg = rg->rg_next;
+      free(rg);
+      rg = next_rg;
+    }
+
+    free(vma);
+    vma = next_vma;
+  }
+}
+
+/*
  *Initialize a empty Memory Management instance
  * @mm:     self mm
- * @caller: mm owner
+ * @caller: mm owner; NULL means the kernel address space
+ *
+ * User processes get three independent VMAs (SMALL/MEDIUM/LARGE). The kernel
+ * keeps the original single VMA because kernel allocations follow a separate
+ * allocation path and must not be redirected to the user VMAs.
  */
 int init_mm(struct mm_struct *mm, struct pcb_t *caller)
 {
-  if(mm==NULL ) return -1;
+  struct vm_area_struct **vma_tail;
 
-  
-  /* init page table directory */
+  if (mm == NULL)
+    return -1;
+
+  /* Initialize every field before allocating sub-objects so failure cleanup
+   * leaves the mm in a known, harmless state. */
   mm->pgd = NULL;
   mm->p4d = NULL;
   mm->pud = NULL;
   mm->pmd = NULL;
-  mm->pt  = NULL;
+  mm->pt = NULL;
   mm->mmap = NULL;
   mm->kcpooltbl = NULL;
   mm->fifo_pgn = NULL;
 
-  struct vm_area_struct *vma0 = malloc(sizeof(struct vm_area_struct));
-
-  if(vma0==NULL) {
-    return -1;
+  for (int i = 0; i < PAGING_MAX_SYMTBL_SZ; i++) {
+    mm->symrgtbl[i].vmaid = -1;
+    mm->symrgtbl[i].rg_start = 0;
+    mm->symrgtbl[i].rg_end = 0;
+    mm->symrgtbl[i].rg_next = NULL;
   }
-   mm->pgd = (uint64_t *)calloc(PAGING64_PGB_SZ, sizeof(uint64_t));
 
-   if (mm->pgd == NULL) {
-    free(vma0);
+  /* Allocate only the top-level page directory. Lower levels are created
+   * lazily by get_pte_5level() when pages are actually mapped. */
+  mm->pgd = (addr_t *)calloc(PAGING64_PGB_SZ, sizeof(addr_t));
+  if (mm->pgd == NULL)
     return -1;
+
+  vma_tail = &mm->mmap;
+
+  if (caller == NULL) {
+    /* Kernel: preserve the original single growable VMA at address zero. */
+    struct vm_area_struct *kernel_vma =
+        create_initial_vma(mm, 0, (addr_t)0, (addr_t)0, (addr_t)0);
+
+    if (kernel_vma == NULL)
+      goto init_fail;
+
+    *vma_tail = kernel_vma;
+  } else {
+    /* User process: reserve three disjoint virtual-address areas. */
+    static const struct {
+        unsigned long id;
+        addr_t start;
+        addr_t end;
+        addr_t initial_sbrk;
+    } user_layout[] = {
+        {
+            VMA_SMALL,
+            VMA_SMALL_START,
+            VMA_SMALL_END,
+            (addr_t)PAGING64_PAGESZ
+        },
+        {
+            VMA_MEDIUM,
+            VMA_MEDIUM_START,
+            VMA_MEDIUM_END,
+            VMA_MEDIUM_START
+        },
+        {
+            VMA_LARGE,
+            VMA_LARGE_START,
+            VMA_LARGE_END,
+            VMA_LARGE_START
+        }
+    };
+    const size_t vma_count = sizeof(user_layout) / sizeof(user_layout[0]);
+    size_t vma_index;
+
+    for (vma_index = 0; vma_index < vma_count; vma_index++) {
+      struct vm_area_struct *new_vma =
+          create_initial_vma(mm,
+                             user_layout[vma_index].id,
+                             user_layout[vma_index].start,
+                             user_layout[vma_index].end,
+                             user_layout[vma_index].initial_sbrk);
+
+      if (new_vma == NULL)
+        goto init_fail;
+
+      *vma_tail = new_vma;
+      vma_tail = &new_vma->vm_next;
+    }
   }
-  /* By default the owner comes with at least one vma */
-  vma0->vm_id = 0;
-  vma0->vm_start = 0;
-  vma0->vm_end = vma0->vm_start;
-  vma0->sbrk = vma0->vm_start;
-
-  // Khoi tao danh sach vung nho rong (free region list)
-  vma0->vm_freerg_list = NULL;
-  struct vm_rg_struct *first_rg = init_vm_rg(vma0->vm_start, vma0->vm_end);
-    if (first_rg == NULL) {
-    free(mm->pgd);
-    mm->pgd = NULL;
-    free(vma0);
-    return -1;
-  }
-  enlist_vm_rg_node(&vma0->vm_freerg_list, first_rg);
-
-  /* update VMA0 next */
-  vma0->vm_next = NULL;
-
-  /* Point vma owner backward */
-  vma0->vm_mm = mm; 
-
-  /* update mmap */
-  mm->mmap = vma0;
-  mm->kcpooltbl = NULL;
-  
-  // Can thiet cho thuat toan doi trang
-  mm->fifo_pgn = NULL;   
 
   return 0;
+
+init_fail:
+  destroy_initial_vmas(mm->mmap);
+  mm->mmap = NULL;
+
+  free(mm->pgd);
+  mm->pgd = NULL;
+  mm->p4d = NULL;
+  mm->pud = NULL;
+  mm->pmd = NULL;
+  mm->pt = NULL;
+
+  return -1;
 }
 
 /* Ham de quy giai phong cay bang phan trang tu tang `level` tro xuong
@@ -724,11 +861,17 @@ int mm_free_page_tables(struct mm_struct *mm)
 
 struct vm_rg_struct *init_vm_rg(addr_t rg_start, addr_t rg_end)
 {
-  struct vm_rg_struct *rgnode = malloc(sizeof(struct vm_rg_struct));
-  // Them doan nay se nhin tuong minh hon mot chut
-  if (rgnode == NULL) {
+  struct vm_rg_struct *rgnode;
+
+  /* Region ranges use half-open intervals [start, end). */
+  if (rg_start > rg_end)
     return NULL;
-  }
+
+  rgnode = (struct vm_rg_struct *)calloc(1, sizeof(*rgnode));
+  if (rgnode == NULL)
+    return NULL;
+
+  rgnode->vmaid = -1; /* caller assigns the owning VMA when known */
   rgnode->rg_start = rg_start;
   rgnode->rg_end = rg_end;
   rgnode->rg_next = NULL;
@@ -738,7 +881,8 @@ struct vm_rg_struct *init_vm_rg(addr_t rg_start, addr_t rg_end)
 
 int enlist_vm_rg_node(struct vm_rg_struct **rglist, struct vm_rg_struct *rgnode)
 {
-  
+  if (rglist == NULL || rgnode == NULL) return -1;
+
   rgnode->rg_next = *rglist;
   *rglist = rgnode;
   
