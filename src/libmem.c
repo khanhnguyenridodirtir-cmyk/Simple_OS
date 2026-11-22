@@ -1200,11 +1200,9 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
   //__write_kernel_mem(...);
 
   // B1: Kiem tra hai region va toan bo khoang copy truoc khi ghi du lieu
-  if (caller == NULL || caller->mm == NULL || caller->krnl == NULL ||
-      caller->krnl->mm == NULL || size == 0)
+  if (caller == NULL || caller->mm == NULL || caller->krnl == NULL || caller->krnl->mm == NULL || size == 0)
     return -1;
-    struct vm_rg_struct *user_region =
-      get_symrg_byid(caller->mm, (int)source);
+  struct vm_rg_struct *user_region =  get_symrg_byid(caller->mm, (int)source);
 
   struct vm_rg_struct *kernel_region =
       get_symrg_byid(caller->krnl->mm, (int)destination);
