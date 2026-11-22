@@ -19,32 +19,28 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <limits.h>
 
-/*get_vma_by_num - get vm area by numID
- *@mm: memory region
- *@vmaid: ID vm area to alloc memory region
+/*
+ * get_vma_by_num - find a VMA by its exact ID.
  *
+ * Do not assume that the list is contiguous or sorted by ID. In particular,
+ * returning the next larger ID for a missing ID can make an allocation land
+ * in the wrong SMALL/MEDIUM/LARGE area.
  */
 struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
 {
-  struct vm_area_struct *pvma = mm->mmap;
+  struct vm_area_struct *vma;
 
-  // Kiem tra danh sach vung nho rong
-  if (mm->mmap == NULL || pvma == NULL) return NULL;
+  if (mm == NULL || vmaid < 0)
+    return NULL;
 
-  int vmait = pvma->vm_id;
-
-  // Duyet tuan tu qua danh sach lien ket cac VMA cho den khi dat ID mong muon
-  while (vmait < vmaid)
-  {
-    if (pvma == NULL)
-      return NULL;
-
-    pvma = pvma->vm_next;
-    if(pvma != NULL) vmait = pvma->vm_id;
+  for (vma = mm->mmap; vma != NULL; vma = vma->vm_next) {
+    if (vma->vm_id == (unsigned long)vmaid)
+      return vma;
   }
 
-  return pvma;
+  return NULL;
 }
 
 /*
@@ -56,8 +52,10 @@ struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
  */
 int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
 {
-    __swap_cp_page(caller->krnl->mram, vicfpn, caller->krnl->active_mswp, swpfpn);
-    return 0;
+  if (caller == NULL || caller->krnl == NULL || caller->krnl->mram == NULL || caller->krnl->active_mswp == NULL)
+    return -1;
+
+  return __swap_cp_page(caller->krnl->mram, vicfpn, caller->krnl->active_mswp, swpfpn);
 }
 
 /*get_vm_area_node - get vm area for a number of pages
@@ -70,24 +68,30 @@ int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
  */
 struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, addr_t alignedsz)
 {
-  struct vm_rg_struct *newrg = NULL;
+  struct mm_struct *mm;
+  struct vm_area_struct *vma;
+  struct vm_rg_struct *newrg;
 
-  // Lay cau truc mm an toan tu ngu canh User hoac Kernel 
-  struct mm_struct *mm = (caller && caller->mm) ? caller->mm : ((caller && caller->krnl) ? caller->krnl->mm : NULL);
-  struct vm_area_struct *cur_vma = get_vma_by_num(mm, vmaid);
+  mm = (caller != NULL && caller->mm != NULL)
+          ? caller->mm
+          : ((caller != NULL && caller->krnl != NULL)
+                  ? caller->krnl->mm : NULL);
 
-  if (cur_vma == NULL) return NULL;
+  if (mm == NULL || alignedsz == 0 ||
+      (alignedsz % PAGING64_PAGESZ) != 0)
+    return NULL;
 
-  // Cap phat dong cho node quan ly vung nho moi
-  newrg = malloc(sizeof(struct vm_rg_struct));
-  if (newrg == NULL) return NULL;
+  vma = get_vma_by_num(mm, vmaid);
+  if (vma == NULL || vma->sbrk < vma->vm_start ||
+      vma->sbrk > vma->vm_end ||
+      alignedsz > vma->vm_end - vma->sbrk)
+    return NULL;
 
-  // Thiet lap ranh gioi bat dau tu dinh sbrk cu va mo rong them mot doan alignedsz
-  newrg->rg_start = cur_vma->sbrk;
-  newrg->rg_end = cur_vma->sbrk + alignedsz;
-  newrg->rg_next = NULL;
+  newrg = init_vm_rg(vma->sbrk, vma->sbrk + alignedsz);
+  if (newrg == NULL)
+    return NULL;
 
-
+  newrg->vmaid = vmaid;
   return newrg;
 }
 /*validate_overlap_vm_area
@@ -99,92 +103,129 @@ struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, ad
  */
 int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, addr_t vmaend)
 {
-  /* TODO validate the planned memory area is not overlapped */
-  struct mm_struct *mm = (caller && caller->mm) ? caller->mm : ((caller && caller->krnl) ? caller->krnl->mm : NULL);
-  if (mm == NULL) return -1;
-    
-  struct vm_area_struct *vma = mm->mmap;
+  struct mm_struct *mm;
+  struct vm_area_struct *cur_vma;
+  struct vm_area_struct *vma;
 
-  // Kiem tra tinh hop le co ban cua khoang dia chi
-  if (vmastart >= vmaend)
-  {
+  mm = (caller != NULL && caller->mm != NULL)
+          ? caller->mm
+          : ((caller != NULL && caller->krnl != NULL)
+                  ? caller->krnl->mm : NULL);
+
+  if (mm == NULL || vmastart >= vmaend)
     return -1;
-  }
 
-  if (vma == NULL)
-  {
+  cur_vma = get_vma_by_num(mm, vmaid);
+  if (cur_vma == NULL ||
+      cur_vma->vm_start > cur_vma->vm_end ||
+      vmastart < cur_vma->vm_start ||
+      vmaend > cur_vma->vm_end)
     return -1;
-  }
 
-  // Lay con tro toi VMA hien tai de loai tru chinh no khi duyet kiem tra chong lan
-  struct vm_area_struct *cur_area = get_vma_by_num(mm, vmaid);
-  if (cur_area == NULL)
-  {
-    return -1;
-  }
+  for (vma = mm->mmap; vma != NULL; vma = vma->vm_next) {
+    if (vma == cur_vma)
+      continue;
 
-  // Duyet toan bo danh sach cac VMA cua tien trinh
-  while (vma != NULL)
-  {
-    // Neu la VMA khac va co giao nhau ve khong gian dia chi -> bao loi
-    if (vma != cur_area && OVERLAP(vmastart, vmaend, vma->vm_start, vma->vm_end))
-    {
+    if (vma->vm_start > vma->vm_end)
       return -1;
-    }
-    vma = vma->vm_next;
+
+    /* Half-open interval overlap: [a,b) intersects [c,d). */
+    if (vmastart < vma->vm_end && vma->vm_start < vmaend)
+      return -1;
   }
 
   return 0;
 }
 
-/*inc_vma_limit - increase vm area limits to reserve space for new variable
- *@caller: caller
- *@vmaid: ID vm area to alloc memory region
- *@inc_sz: increment size
+/* Round a non-zero byte count up to a page multiple without integer overflow. */
+static int align_size_to_page(addr_t size, addr_t *aligned_size)
+{
+  const addr_t page_size = (addr_t)PAGING64_PAGESZ;
+  const addr_t max_addr = (addr_t)-1;
+  addr_t remainder;
+  addr_t padding;
+
+  if (aligned_size == NULL || size == 0 || page_size == 0)
+    return -1;
+
+  remainder = size % page_size;
+  padding = (remainder == 0) ? 0 : page_size - remainder;
+
+  if (size > max_addr - padding)
+    return -1;
+
+  *aligned_size = size + padding;
+  return 0;
+}
+
+/*
+ * inc_vma_limit - map additional pages at the current VMA break.
  *
+ * vm_end is the exclusive, pre-reserved upper bound of the VMA. It must not
+ * be moved when an allocation grows; only sbrk advances. This is essential
+ * for keeping the SMALL/MEDIUM/LARGE address areas disjoint.
  */
 int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
 {
-  struct mm_struct *mm = (caller && caller->mm) ? caller->mm : ((caller && caller->krnl) ? caller->krnl->mm : NULL);
-  if (mm == NULL) return -1;
+  struct mm_struct *mm;
+  struct vm_area_struct *vma;
+  struct vm_rg_struct *new_freerg;
+  struct vm_rg_struct mapped_rg;
+  addr_t aligned_inc_sz;
+  addr_t old_sbrk;
+  addr_t new_sbrk;
+  addr_t page_count;
+  addr_t map_result;
 
-  struct vm_area_struct *cur_vma = get_vma_by_num(mm, vmaid);
-  if (cur_vma == NULL) return -1;
+  mm = (caller != NULL && caller->mm != NULL)
+           ? caller->mm
+           : ((caller != NULL && caller->krnl != NULL)
+                  ? caller->krnl->mm : NULL);
+  if (mm == NULL || caller == NULL || caller->krnl == NULL ||
+      caller->krnl->mram == NULL || align_size_to_page(inc_sz, &aligned_inc_sz) < 0)
+    return -1;
 
-  // 1. Lam tron kich thuoc xin cap phat len boi so cua kich thuoc trang (Page Size)
-  addr_t aligned_inc_sz = PAGING64_PAGE_ALIGNSZ(inc_sz);
-  int incpgnum = aligned_inc_sz / PAGING64_PAGESZ;
-  addr_t old_sbrk = cur_vma->sbrk;
-  addr_t new_sbrk = old_sbrk + aligned_inc_sz;
+  vma = get_vma_by_num(mm, vmaid);
+  if (vma == NULL)
+    return -1;
 
-  // 2. Kiem tra vung mo rong moi [old_sbrk, new_sbrk) co dung cham voi VMA khac khong
+  old_sbrk = vma->sbrk;
+  if (old_sbrk < vma->vm_start || old_sbrk > vma->vm_end ||
+      (old_sbrk % PAGING64_PAGESZ) != 0 ||
+      aligned_inc_sz > vma->vm_end - old_sbrk)
+    return -1;
+
+  new_sbrk = old_sbrk + aligned_inc_sz;
   if (validate_overlap_vm_area(caller, vmaid, old_sbrk, new_sbrk) < 0)
     return -1;
 
-  // 3. Luu lai gioi han cu de phuc hoi (rollback) neu buoc anh xa RAM ben duoi that bai
-  addr_t old_vm_end = cur_vma->vm_end;
-  if (new_sbrk > cur_vma->vm_end)
-  {
-    cur_vma->vm_end = new_sbrk;
-  }
-
-  // 4. Cap phat khung trang vat ly (RAM) va anh xa ngay vao bang phan trang (PTE)
-  struct vm_rg_struct ret_rg;
-  if (vm_map_ram(caller, cur_vma->vm_start, cur_vma->vm_end, old_sbrk, incpgnum, &ret_rg) == (addr_t)-1)
-  {
-    cur_vma->vm_end = old_vm_end; // Khoi phuc lai vm_end ban dau
+  page_count = aligned_inc_sz / PAGING64_PAGESZ;
+  if (page_count == 0 || page_count > (addr_t)INT_MAX)
     return -1;
-  }
 
-  // 5. Cap nhat dinh sbrk moi
-  cur_vma->sbrk = new_sbrk;
-
-  // 6. Dong goi vung nho vua duoc mo rong thanh mot free region node 
-  // va dua vao danh sach quan ly vung trong
-  struct vm_rg_struct *new_freerg = init_vm_rg(old_sbrk, new_sbrk);
+  /* Allocate metadata before mapping so an allocation failure cannot leave
+   * mapped pages without a corresponding free-region node. */
+  new_freerg = init_vm_rg(old_sbrk, new_sbrk);
   if (new_freerg == NULL)
     return -1;
-  enlist_vm_rg_node(&cur_vma->vm_freerg_list, new_freerg);
+  new_freerg->vmaid = vmaid;
+
+  map_result = vm_map_ram(caller, vma->vm_start, vma->vm_end,
+                          old_sbrk, (int)page_count, &mapped_rg);
+  if (map_result != 0) {
+    free(new_freerg);
+    return -1;
+  }
+
+  /* The VMA's reserved bounds stay unchanged; only the committed break moves. */
+  vma->sbrk = new_sbrk;
+  if (enlist_vm_rg_node(&vma->vm_freerg_list, new_freerg) < 0) {
+    /* With valid non-NULL arguments enlist_vm_rg_node cannot fail. Keep a
+     * defensive error path in case its implementation changes later. */
+    vma->sbrk = old_sbrk;
+    free(new_freerg);
+    return -1;
+  }
 
   return 0;
 }

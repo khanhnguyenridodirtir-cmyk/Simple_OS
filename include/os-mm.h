@@ -10,16 +10,20 @@
 
 #ifndef OSMM_H
 #define OSMM_H
+
 #include <stdint.h>
-#include<pthread.h>
+#include <pthread.h>
+
 #define MM_PAGING
 #define PAGING_MAX_MMSWP 4 /* max number of supported swapped space */
 #define PAGING_MAX_SYMTBL_SZ 30
 
+/* Virtual Memory Area IDs */
 #define VMA_SMALL   0
 #define VMA_MEDIUM  1
 #define VMA_LARGE   2
 
+/* Allocation size thresholds */
 #define SMALL_MAX_SIZE  256
 #define MEDIUM_MAX_SIZE 4096
 
@@ -27,7 +31,6 @@
  * @bksysnet: in long address mode of 64bit or original 32bit
  * the address type need to be redefined
  */
-
 #ifdef MM64
 #define ADDR_TYPE uint64_t
 #else
@@ -56,7 +59,8 @@ struct pgn_t{
 };
 
 /*
- *  Memory region struct
+ * Memory region descriptor: an allocated/free sub-range that belongs to
+ * exactly one VMA, identified by vmaid.
  */
 struct vm_rg_struct {
    int vmaid;
@@ -68,7 +72,11 @@ struct vm_rg_struct {
 };
 
 /*
- *  Memory area struct
+ * Memory area descriptor (VMA).
+ * vm_start/vm_end reserve the half-open virtual-address interval
+ * [vm_start, vm_end). vm_end is the fixed exclusive upper bound.
+ * sbrk is the first address after the portion currently extended/mapped;
+ * it starts at vm_start and must never exceed vm_end.
  */
 struct vm_area_struct {
    unsigned long vm_id;
@@ -76,10 +84,7 @@ struct vm_area_struct {
    addr_t vm_end;
 
    addr_t sbrk;
-/*
- * Derived field
- * unsigned long vm_limit = vm_end - vm_start
- */
+
    struct mm_struct *vm_mm;
    struct vm_rg_struct *vm_freerg_list;
    struct vm_area_struct *vm_next;
@@ -115,17 +120,17 @@ struct mm_struct {
    uint32_t *pgd;
 #endif
 
+   /* Head of the VMA linked list (SMALL -> MEDIUM -> LARGE for user mm). */
    struct vm_area_struct *mmap;
 
-   /* Currently we support a fixed number of symbol */
+   /* Currently we support a fixed number of symbols. */
    struct vm_rg_struct symrgtbl[PAGING_MAX_SYMTBL_SZ];
 
-   /* list of free page */
+   /* List of free page numbers. */
    struct pgn_t *fifo_pgn;
 
    /* kmem cache pool */
    struct kcache_pool_struct *kcpooltbl;
-
 };
 
 
@@ -153,11 +158,8 @@ struct memphy_struct {
    struct framephy_struct *free_fp_list;
    struct framephy_struct *used_fp_list;
 
-
-   // Them cho viec chay nhieu luong
+   /* Protect shared physical-memory state accessed by CPU/DMA threads. */
    pthread_mutex_t lock;
-
-
 };
 
-#endif
+#endif /* OSMM_H */
