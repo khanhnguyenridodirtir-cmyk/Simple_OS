@@ -394,7 +394,7 @@ int init_memphy(struct memphy_struct *mp, addr_t max_size, int randomflg)
    pagze = PAGING_PAGESZ;
 #endif
    int succsesFlg =  MEMPHY_format(mp, pagze);
-   printf("%d",succsesFlg);
+
    if(succsesFlg==-1){
       // neu ko lam dc coi nhu that bai va hoan tra
       free(mp->storage);

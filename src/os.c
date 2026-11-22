@@ -429,16 +429,16 @@ static void * ld_routine(void * args) {
 	os.mm = (struct mm_struct*)malloc(sizeof(struct mm_struct));
 	// Kiem tra cho chac
 	if (os.mm == NULL) {
-#ifdef MAINDEBUGCONFIG
+	#ifdef MAINDEBUGCONFIG
     	fprintf(stderr, "ERROR: Cannot allocate kernel mm_struct\n");
-#endif
+	#endif
 		exit(EXIT_FAILURE);
 	}
 	// Khoi tao mm cho os va kiem tra luon
 	if (init_mm(os.mm, NULL) != 0) {
-#ifdef MAINDEBUGCONFIG
+	#ifdef MAINDEBUGCONFIG
 		fprintf(stderr, "ERROR: Cannot initialize kernel mm_struct\n");
-#endif
+	#endif
 		free(os.mm);
 		os.mm = NULL;
 		exit(EXIT_FAILURE);
@@ -447,10 +447,10 @@ static void * ld_routine(void * args) {
 		struct pcb_t * proc = load(ld_processes.path[i]);
 		// Tuong tu tren
 	if (proc == NULL) {
-#ifdef MAINDEBUGCONFIG
+	#ifdef MAINDEBUGCONFIG
 		fprintf(stderr, "ERROR: Cannot load process from %s\n",
 			ld_processes.path[i]);
-#endif
+	#endif
 			exit(EXIT_FAILURE);
 	}
 		proc->krnl = &os;
@@ -466,25 +466,25 @@ static void * ld_routine(void * args) {
 	// Tuong tu tren
 	if (proc->mm == NULL) {
 
-#define MAINDEBUGCONFIG
-
+	#ifdef MAINDEBUGCONFIG
     	fprintf(stderr,
 			"ERROR: Cannot allocate mm_struct for PID %d\n",
 			proc->pid);
-#endif
+	#endif
 		exit(EXIT_FAILURE);
 	}
 	// Tuong tu khi init cua kernel memmory thi kiem tra luon trang thai tra ve
 	if (init_mm(proc->mm, proc) != 0) {
 
-#ifdef MAINDEBUGCONFIG
+	#ifdef MAINDEBUGCONFIG
 		fprintf(stderr, "ERROR: Cannot initialize mm_struct for PID %d\n",
-				proc->pid);
-#endif
-				free(proc->mm);
+		proc->pid);
+	#endif
+		free(proc->mm);
 		proc->mm = NULL;
 		exit(EXIT_FAILURE);
 	}
+#endif
 
 		printf("\tLoaded a process at %s, PID: %d PRIO: %ld\n",
 		ld_processes.path[i], proc->pid, ld_processes.prio[i]);

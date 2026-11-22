@@ -27,6 +27,9 @@ static pthread_mutex_t mmvm_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t kmm_lock = PTHREAD_MUTEX_INITIALIZER;
 // prototype tu che de giai phong bo nho
 int free_pcb_memph(struct pcb_t *caller);
+struct vm_rg_struct *get_symrg_byaddr( struct mm_struct *mm,addr_t addr,int *rgid); 
+static int select_vmaid(addr_t size);
+
 
 #define DMADEBUG
 /*enlist_vm_freerg_list - add new rg to freerg_list
@@ -35,7 +38,7 @@ int free_pcb_memph(struct pcb_t *caller);
  *
  */
 // Dua mot region moi vao free list
-int enlist_vm_freerg_list(struct mm_struct *mm, struct vm_rg_struct *rg_elmt)
+int enlist_vm_freerg_list(struct mm_struct *mm, struct vm_rg_struct *rg_elmt, int vmaid)
 {
   // B1  : validate du lieu
   if (mm == NULL || mm->mmap == NULL || rg_elmt == NULL)
@@ -46,13 +49,17 @@ int enlist_vm_freerg_list(struct mm_struct *mm, struct vm_rg_struct *rg_elmt)
     return -1;
 
   // B3 : lay con con tro vm_freerg_list va xet hop le cua con tro
-  struct vm_rg_struct *rg_node = mm->mmap->vm_freerg_list;
+  struct vm_area_struct* currentvma =  get_vma_by_num(mm, vmaid);
+  if(currentvma==NULL){
+    return -1;
+  }
+  struct vm_rg_struct *rg_node  = currentvma->vm_freerg_list;
 
   // B4  : gan vung moi vao dau danh sach freerg_list
   rg_elmt->rg_next = rg_node;
 
   /* Enlist the new region */
-  mm->mmap->vm_freerg_list = rg_elmt;
+  currentvma->vm_freerg_list = rg_elmt;
 
   return 0;
 }
@@ -109,6 +116,7 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
   // lay vung nho neu ma lay duoc thi gan va tra ve
   if (get_free_vmrg_area(caller, vmaid, size, &rgnode) == 0)
   {
+    caller->mm->symrgtbl[rgid].vmaid = vmaid;
     caller->mm->symrgtbl[rgid].rg_start = rgnode.rg_start;
     caller->mm->symrgtbl[rgid].rg_end = rgnode.rg_end;
     *alloc_addr = rgnode.rg_start;
@@ -136,6 +144,7 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
   
   /*Successful increase limit */
   if (get_free_vmrg_area(caller, vmaid, size, &rgnode) == 0) {
+    caller->mm->symrgtbl[rgid].vmaid=vmaid;
     caller->mm->symrgtbl[rgid].rg_start = rgnode.rg_start;
     caller->mm->symrgtbl[rgid].rg_end = rgnode.rg_end;
     *alloc_addr = rgnode.rg_start;
@@ -179,20 +188,18 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
    }
 
    // enlist_vm_freerg_list hien tai chi quan ly VMA dau tien
-   if (cur_vma != caller->mm->mmap) {
-     pthread_mutex_unlock(&mmvm_lock);
-     return -1;
-   }
-
+  
    struct vm_rg_struct *rgnode =
        get_symrg_byid(caller->mm, rgid);
 
-   if (rgnode == NULL ||
-       (rgnode->rg_start == 0 && rgnode->rg_end == 0) ||
-       rgnode->rg_start >= rgnode->rg_end) {
-     pthread_mutex_unlock(&mmvm_lock);
-     return -1;
-   }
+     if (rgnode == NULL ||
+    rgnode->vmaid != vmaid ||
+    (rgnode->rg_start == 0 && rgnode->rg_end == 0) ||
+    rgnode->rg_start >= rgnode->rg_end) {
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
+
 
    // B2: tao vung moi - xem xet co tao thanh cong thi tiep tuc
    struct vm_rg_struct *freerg_node =
@@ -204,23 +211,25 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
    }
 
    // B3 :
+   freerg_node->vmaid = vmaid;
    freerg_node->rg_start = rgnode->rg_start;
    freerg_node->rg_end = rgnode->rg_end;
    freerg_node->rg_next = NULL;
 
    /*enlist the obsoleted memory region */
-   if (enlist_vm_freerg_list(caller->mm, freerg_node) < 0) {
+   if (enlist_vm_freerg_list(caller->mm, freerg_node,vmaid) < 0) {
      free(freerg_node);
      pthread_mutex_unlock(&mmvm_lock);
      return -1;
    }
 
    // B3: Reset symbol table entry
-   rgnode->rg_start = rgnode->rg_end = 0;
+   rgnode->rg_start = 0;
+   rgnode->rg_end = 0;
+   rgnode->vmaid = -1;
    rgnode->rg_next = NULL;
-
    pthread_mutex_unlock(&mmvm_lock);
-   return 0;
+  return 0;
 }
 /*liballoc - PAGING-based allocate a region memory
  *@proc:  Process executing the instruction
@@ -229,16 +238,22 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
  */
 int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
 {
+  if(reg_index>=MAXREG || proc==NULL) return-1;
   addr_t  addr;
-  int val = __alloc(proc, 0, reg_index, size, &addr);
+  
+  int vmaid = select_vmaid(size);
+  
+  int val = __alloc(proc, vmaid, reg_index, size, &addr);
+ 
   if (val == -1)
   {
     return -1;
   }
+  proc->regs[reg_index] = addr;
 #ifdef IODUMP
   if(proc->krnl != NULL && proc->krnl->mram != NULL) MEMPHY_dump(proc->krnl->mram);
   printf("[ALLOC] PID=%d reg=%d -> rg_start=%lu, rg_end=%lu\n",
-       proc->pid, reg_index, proc->mm->symrgtbl[reg_index].rg_start, proc->mm->symrgtbl[reg_index].rg_end);
+          proc->pid, reg_index, proc->mm->symrgtbl[reg_index].rg_start, proc->mm->symrgtbl[reg_index].rg_end);
 #ifdef PAGETBL_DUMP
     print_pgtbl(proc, 0, -1); // print max TBL
 #endif
@@ -248,6 +263,37 @@ int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
   return val;
 }
 
+static int select_vmaid(addr_t size)
+{
+    if (size <= SMALL_MAX_SIZE)
+        return VMA_SMALL;
+
+    if (size <= MEDIUM_MAX_SIZE)
+        return VMA_MEDIUM;
+
+    return VMA_LARGE;
+}
+
+struct vm_rg_struct *get_symrg_byaddr(
+    struct mm_struct *mm,
+    addr_t addr,
+    int *rgid
+) {
+    if (mm == NULL || rgid == NULL)
+        return NULL;
+
+    for (int i = 0; i < PAGING_MAX_SYMTBL_SZ; i++) {
+        struct vm_rg_struct *rg = &mm->symrgtbl[i];
+
+        if (rg->rg_start == addr &&
+            rg->rg_end > rg->rg_start) {
+            *rgid = i;
+            return rg;
+        }
+    }
+
+    return NULL;
+}
 /*libfree - PAGING-based free a region memory
  *@proc: Process executing the instruction
  *@size: allocated size
@@ -256,22 +302,36 @@ int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
 
 int libfree(struct pcb_t *proc, uint32_t reg_index)
 {
-  int val = __free(proc, 0, reg_index);
-  if (val == -1)
-  {
-    return -1;
-  }
-printf("%s:%d\n",__func__,__LINE__);
-#ifdef IODUMP
-  if (proc->krnl != NULL && proc->krnl->mram != NULL)
-    MEMPHY_dump(proc->krnl->mram);
-#ifdef PAGETBL_DUMP
-  print_pgtbl(proc, 0, -1); // print max TBL
-#endif
-#endif
-  return 0;//val;
-}
+    if (proc == NULL || proc->mm == NULL)
+        return -1;
 
+    if (reg_index >= MAXREG)
+        return -1;
+
+    addr_t addr = proc->regs[reg_index];
+
+    if (addr == 0)
+        return -1;
+
+    int rgid = -1;
+
+    struct vm_rg_struct *rgnode =
+        get_symrg_byaddr(proc->mm, addr, &rgid);
+
+    if (rgnode == NULL)
+        return -1;
+
+    int actual_vmaid = rgnode->vmaid;
+
+    int val = __free(proc, actual_vmaid, rgid);
+
+    if (val < 0)
+        return -1;
+
+    proc->regs[reg_index] = 0;
+
+    return 0;
+}
 /*pg_getpage - get the page in ram
  *@mm: memory region
  *@pagenum: PGN
@@ -549,7 +609,7 @@ int __read(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE *data)
   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
 
   /* TODO Invalid memory identify */
- if (currg == NULL || cur_vma == NULL ||
+ if (currg == NULL || cur_vma == NULL ||currg->vmaid != vmaid||
     (currg->rg_start == 0 && currg->rg_end == 0) ||
     currg->rg_start >= currg->rg_end ||
     offset >= currg->rg_end - currg->rg_start){
@@ -571,18 +631,29 @@ int libread(
     addr_t offset,    // Source address = [source] + [offset]
     uint32_t* destination)
 {
-    if (proc == NULL || destination == NULL)
-        return -1;
+  if (proc == NULL || proc->mm == NULL ||
+    destination == NULL || *destination >= MAXREG)
+    return -1;
   BYTE data;
   printf("%s:%d\n",__func__,__LINE__);
-  // Doc gia tri tai vi tri source + offset va gan vao data
-  int val = __read(proc, 0, source, offset, &data);
+
+  // Doc gia tri tai vi tri source + offset va gan vao 
+  
+  struct vm_rg_struct *rgnode =
+    get_symrg_byid(proc->mm, source);
+
+  if (rgnode == NULL ||
+    rgnode->rg_start >= rgnode->rg_end)
+    return -1;
+
+  int vmaid = rgnode->vmaid;
+  int val = __read(proc, vmaid, source, offset, &data);
   if(val<0){
     return -1;
   }
   // gan gia tri vao data
 
-  *destination = (uint8_t)data;
+  proc->regs[*destination] = data;
 #ifdef IODUMP
   /* TODO dump IO content (if needed) */
   printf("[VERIFY READ] PID=%d reg=%d offset=%ld -> val=%d\n", proc->pid, source, offset, data);
@@ -611,7 +682,7 @@ int __write(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE value
   struct vm_rg_struct *currg = get_symrg_byid(caller->mm, rgid);
   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
 
-  if (currg == NULL || cur_vma == NULL ||
+  if (currg == NULL || cur_vma == NULL ||currg->vmaid != vmaid||
     (currg->rg_start == 0 && currg->rg_end == 0) ||
     currg->rg_start >= currg->rg_end ||
     offset >= currg->rg_end - currg->rg_start) /* Invalid memory identify */
@@ -640,9 +711,19 @@ int libwrite(
     uint32_t destination, // Index of destination register
     addr_t offset)
 {
-  if (proc == NULL)
+ if (proc == NULL || proc->mm == NULL ||
+    destination >= MAXREG)
     return -1;
-  int val = __write(proc, 0, destination, offset, data);
+
+  struct vm_rg_struct *rgnode =
+    get_symrg_byid(proc->mm, destination);
+
+if (rgnode == NULL ||
+    rgnode->rg_start >= rgnode->rg_end)
+    return -1;
+
+int vmaid = rgnode->vmaid;
+  int val = __write(proc, vmaid, destination, offset, data);
   if (val == -1)
   {
     return -1;
@@ -668,9 +749,8 @@ static int get_free_vmrg_area_mm(struct mm_struct *mm, int vmaid, addr_t size,
                                  struct vm_rg_struct *newrg)
 {
   // B1: Kiem tra dau vao va VMA
-  if (mm == NULL || newrg == NULL || size == 0)
+  if  (newrg == NULL || size <= 0)
     return -1;
-
   struct vm_area_struct *vma = get_vma_by_num(mm, vmaid);
   if (vma == NULL)
     return -1;
@@ -724,8 +804,9 @@ static int validate_mem_region(struct mm_struct *mm, int vmaid, int rgid,
   struct vm_area_struct *vma = get_vma_by_num(mm, vmaid);
   
   if (region == NULL || vma == NULL ||
-      (region->rg_start == 0 && region->rg_end == 0) ||
-      region->rg_start >= region->rg_end)
+    region->vmaid != vmaid ||
+    (region->rg_start == 0 && region->rg_end == 0) ||
+    region->rg_start >= region->rg_end)
     return -1;
 
   // B2: Kiem tra toan bo khoang [offset, offset + size)
@@ -842,6 +923,7 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
     }
 
     // B4.3: Cap nhat break va danh sach vung trong cua Kernel VMA
+    
     kvma->sbrk += aligned_size;
     kvma->vm_end = kvma->sbrk;
     newrg->rg_next = NULL;
@@ -860,6 +942,7 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
   }
 
   // B6: Luu vung da cap vao Kernel symbol table va tra dia chi ao
+  symrg->vmaid = vmaid;
   symrg->rg_start = alloc_rg.rg_start;
   symrg->rg_end = alloc_rg.rg_end;
   *alloc_addr = alloc_rg.rg_start;
@@ -1120,23 +1203,41 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
   if (caller == NULL || caller->mm == NULL || caller->krnl == NULL ||
       caller->krnl->mm == NULL || size == 0)
     return -1;
+    struct vm_rg_struct *user_region =
+      get_symrg_byid(caller->mm, (int)source);
 
-  if (validate_mem_region(caller->mm, 0, (int)source, offset, size) < 0 ||
-      validate_mem_region(caller->krnl->mm, 0, (int)destination, offset, size) < 0)
+  struct vm_rg_struct *kernel_region =
+      get_symrg_byid(caller->krnl->mm, (int)destination);
+
+  if (user_region == NULL || kernel_region == NULL)
+    return -1;
+    // B2: Lay VMA ID tu tung region
+  int user_vmaid = user_region->vmaid;
+  int kernel_vmaid = kernel_region->vmaid;
+
+  if (user_vmaid < 0 || kernel_vmaid < 0)
+    return -1;
+   // B3: Kiem tra toan bo khoang copy truoc khi ghi
+  if (validate_mem_region(caller->mm, user_vmaid,
+                          (int)source, offset, size) < 0 ||
+      validate_mem_region(caller->krnl->mm, kernel_vmaid,
+                          (int)destination, offset, size) < 0)
     return -1;
 
-  // B2: Copy tung byte tu User MM sang Kernel MM
+  // B4: Copy tung byte tu User MM sang Kernel MM
   for (uint32_t i = 0; i < size; i++)
   {
     BYTE data;
-    if (__read_user_mem(caller, 0, (int)source, offset + i, &data) < 0 ||
-        __write_kernel_mem(caller, 0, (int)destination, offset + i, data) < 0)
+
+    if (__read_user_mem(caller, user_vmaid,
+                        (int)source, offset + i, &data) < 0 ||
+        __write_kernel_mem(caller, kernel_vmaid,
+                           (int)destination, offset + i, data) < 0)
       return -1;
   }
 
   return 0;
 }
-
 int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destination, uint32_t offset, uint32_t size)
 {
   /* TODO: provide OS level management kmem
@@ -1147,21 +1248,44 @@ int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destina
   //__read_kernel_mem(...)
   //__write_user_mem(...);
 
-  // B1: Kiem tra hai region va toan bo khoang copy truoc khi ghi du lieu
-  if (caller == NULL || caller->mm == NULL || caller->krnl == NULL ||
-      caller->krnl->mm == NULL || size == 0)
+  if (caller == NULL || caller->mm == NULL ||
+      caller->krnl == NULL || caller->krnl->mm == NULL ||
+      size == 0)
     return -1;
 
-  if (validate_mem_region(caller->krnl->mm, 0, (int)source, offset, size) < 0 ||
-      validate_mem_region(caller->mm, 0, (int)destination, offset, size) < 0)
+  // B1: Lay region tu Kernel MM va User MM
+  struct vm_rg_struct *kernel_region =
+      get_symrg_byid(caller->krnl->mm, (int)source);
+
+  struct vm_rg_struct *user_region =
+      get_symrg_byid(caller->mm, (int)destination);
+
+  if (kernel_region == NULL || user_region == NULL)
     return -1;
 
-  // B2: Copy tung byte tu Kernel MM sang User MM
+  // B2: Lay VMA ID tu tung region
+  int kernel_vmaid = kernel_region->vmaid;
+  int user_vmaid = user_region->vmaid;
+
+  if (kernel_vmaid < 0 || user_vmaid < 0)
+    return -1;
+
+  // B3: Kiem tra toan bo khoang copy truoc khi ghi
+  if (validate_mem_region(caller->krnl->mm, kernel_vmaid,
+                          (int)source, offset, size) < 0 ||
+      validate_mem_region(caller->mm, user_vmaid,
+                          (int)destination, offset, size) < 0)
+    return -1;
+
+  // B4: Copy tung byte tu Kernel MM sang User MM
   for (uint32_t i = 0; i < size; i++)
   {
     BYTE data;
-    if (__read_kernel_mem(caller, 0, (int)source, offset + i, &data) < 0 ||
-        __write_user_mem(caller, 0, (int)destination, offset + i, data) < 0)
+
+    if (__read_kernel_mem(caller, kernel_vmaid,
+                          (int)source, offset + i, &data) < 0 ||
+        __write_user_mem(caller, user_vmaid,
+                         (int)destination, offset + i, data) < 0)
       return -1;
   }
 
@@ -1191,7 +1315,7 @@ int __read_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, 
   struct vm_area_struct *vma = get_vma_by_num(kmm, vmaid);
 
   // B2: Xac nhan region da cap phat va offset nam trong bien
-  if (region == NULL || vma == NULL ||
+  if (region == NULL || vma == NULL || region->vmaid != vmaid||
       (region->rg_start == 0 && region->rg_end == 0) ||
       region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
   {
@@ -1227,7 +1351,7 @@ int __write_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset,
   struct vm_area_struct *vma = get_vma_by_num(kmm, vmaid);
 
   // B2: Xac nhan region da cap phat va offset hop le
-  if (region == NULL || vma == NULL ||
+  if (region == NULL || vma == NULL ||region->vmaid != vmaid||
       (region->rg_start == 0 && region->rg_end == 0) ||
       region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
   {
@@ -1263,7 +1387,7 @@ int __read_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BY
   struct vm_area_struct *vma = get_vma_by_num(caller->mm, vmaid);
 
   // B2: Xac nhan region da cap phat va offset nam trong bien
-  if (region == NULL || vma == NULL ||
+  if (region == NULL || vma == NULL || region->vmaid!=vmaid ||
       (region->rg_start == 0 && region->rg_end == 0) ||
       region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
   {
@@ -1299,7 +1423,7 @@ int __write_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, B
   struct vm_area_struct *vma = get_vma_by_num(caller->mm, vmaid);
 
   // B2: Xac nhan region da cap phat va offset hop le
-  if (region == NULL || vma == NULL ||
+  if (region == NULL || vma == NULL ||region->vmaid!=vmaid ||
       (region->rg_start == 0 && region->rg_end == 0) ||
       region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
   {
