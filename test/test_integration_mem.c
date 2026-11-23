@@ -1,5 +1,6 @@
 #include "test_helpers.h"
 #include "libmem.h"
+#include "mm64.h"
 #include "queue.h"
 #include "syscall.h"
 
@@ -11,8 +12,9 @@
 int libsyscall(struct pcb_t *caller, uint32_t syscall_idx, arg_t a1, arg_t a2, arg_t a3);
 int __sys_memmap(struct krnl_t *krnl, uint32_t pid, struct sc_regs *regs);
 int free_pcb_memph(struct pcb_t *caller);
+struct vm_rg_struct *get_symrg_byaddr(struct mm_struct *mm, addr_t addr, int *rgid);
 
-/* Bang syscall that khop voi syscall.tbl */
+/* Bang syscall khop voi syscall.tbl */
 const char *sys_call_table[] = {
     "sys_ni_syscall", "sys_ni_syscall", "sys_ni_syscall", "sys_ni_syscall",
     "sys_ni_syscall", "sys_ni_syscall", "sys_ni_syscall", "sys_ni_syscall",
@@ -67,11 +69,7 @@ static void it_cleanup_mm_structs(struct mm_struct *mm)
         free(vtmp);
     }
 
-    free(mm->pgd);
-    free(mm->p4d);
-    free(mm->pud);
-    free(mm->pmd);
-    free(mm->pt);
+    mm_free_page_tables(mm);
 }
 
 static void it_env_init(struct it_test_env *env, int ram_frames, int swp_frames)
@@ -106,6 +104,10 @@ static void it_proc_init(struct it_test_env *env, struct pcb_t *proc,
     proc->mm = mm;
     init_mm(mm, proc);
 
+    for (int i = 0; i < MAXREG; i++) {
+        proc->regs[i] = (addr_t)-1;
+    }
+
     if (env->running_list.size < MAX_QUEUE_SIZE) {
         env->running_list.proc[env->running_list.size++] = proc;
     }
@@ -123,12 +125,7 @@ static void it_env_destroy(struct it_test_env *env)
         struct pcb_t dummy = {0};
         dummy.krnl = &env->krnl;
         dummy.mm = &env->kmm;
-        for (int pgn = 0; pgn < 512; ++pgn) {
-            addr_t pte = pte_get_entry(&env->kmm, (addr_t)pgn, &dummy);
-            if (PAGING_PAGE_PRESENT(pte) && env->mram_ready) {
-                MEMPHY_put_freefp(&env->mram, PAGING_FPN(pte));
-            }
-        }
+        free_pcb_memph(&dummy);
         it_cleanup_mm_structs(&env->kmm);
     }
     test_memphy_destroy(&env->mram, env->mram_ready);
@@ -149,9 +146,10 @@ static void run_it01(void)
     TEST_ASSERT_EQ(0, libwrite(&proc_a, (BYTE)0x55, 0, 0));
     TEST_ASSERT_EQ(0, libwrite(&proc_a, (BYTE)0xAA, 0, 511));
 
-    /* Kiem tra PTE da map vao RAM va du lieu nam dung frame vat ly */
-    addr_t pte = pte_get_entry(&mm_a, 0, &proc_a);
+    addr_t pgn = proc_a.regs[0] >> PAGING64_ADDR_PT_SHIFT;
+    addr_t pte = pte_get_entry(&mm_a, pgn, &proc_a);
     TEST_ASSERT(PAGING_PAGE_PRESENT(pte) != 0);
+
 
     addr_t fpn = PAGING_FPN(pte);
     addr_t page_sz = (addr_t)test_memphy_page_size();
@@ -165,7 +163,7 @@ static void run_it01(void)
     it_env_destroy(&env);
 }
 
-/* IT02: Process A READ lai du lieu da ghi */
+/* IT02: Process A READ lai du lieu da ghi qua thanh ghi dich rieng biet */
 static void run_it02(void)
 {
     struct it_test_env env;
@@ -179,10 +177,10 @@ static void run_it02(void)
     for (int i = 0; i < 32; ++i) {
         TEST_ASSERT_EQ(0, libwrite(&proc_a, (BYTE)(0x10 + i), 0, (addr_t)(i * 16)));
     }
+    uint32_t dst_reg = 7;
     for (int i = 0; i < 32; ++i) {
-        uint32_t val = 0;
-        TEST_ASSERT_EQ(0, libread(&proc_a, 0, (addr_t)(i * 16), &val));
-        TEST_ASSERT_EQ((uint32_t)(0x10 + i), val);
+        TEST_ASSERT_EQ(0, libread(&proc_a, 0, (addr_t)(i * 16), &dst_reg));
+        TEST_ASSERT_EQ((uint64_t)(0x10 + i), proc_a.regs[dst_reg]);
     }
 
     it_proc_destroy(&proc_a, &mm_a);
@@ -200,19 +198,18 @@ static void run_it03(void)
     it_proc_init(&env, &proc_a, &mm_a, 20031);
     it_proc_init(&env, &proc_b, &mm_b, 20032);
 
-    /* Ca A va B deu cap phat region 0 bat dau tai virtual address 0 */
     TEST_ASSERT_EQ(0, liballoc(&proc_a, 256, 0));
     TEST_ASSERT_EQ(0, liballoc(&proc_b, 256, 0));
-    TEST_ASSERT_EQ(mm_a.symrgtbl[0].rg_start, mm_b.symrgtbl[0].rg_start);
+    TEST_ASSERT_EQ(proc_a.regs[0], proc_b.regs[0]);
 
     TEST_ASSERT_EQ(0, libwrite(&proc_a, (BYTE)0x33, 0, 10));
     TEST_ASSERT_EQ(0, libwrite(&proc_b, (BYTE)0x77, 0, 10));
 
-    uint32_t val_a = 0, val_b = 0;
-    TEST_ASSERT_EQ(0, libread(&proc_a, 0, 10, &val_a));
-    TEST_ASSERT_EQ(0, libread(&proc_b, 0, 10, &val_b));
-    TEST_ASSERT_EQ(0x33, val_a);
-    TEST_ASSERT_EQ(0x77, val_b);
+    uint32_t dst_reg = 7;
+    TEST_ASSERT_EQ(0, libread(&proc_a, 0, 10, &dst_reg));
+    TEST_ASSERT_EQ(0x33, proc_a.regs[dst_reg]);
+    TEST_ASSERT_EQ(0, libread(&proc_b, 0, 10, &dst_reg));
+    TEST_ASSERT_EQ(0x77, proc_b.regs[dst_reg]);
 
     it_proc_destroy(&proc_a, &mm_a);
     it_proc_destroy(&proc_b, &mm_b);
@@ -234,10 +231,13 @@ static void run_it04(void)
     TEST_ASSERT_EQ(0, liballoc(&proc_a, 3 * page_sz, 0));
     TEST_ASSERT_EQ(0, liballoc(&proc_b, 3 * page_sz, 0));
 
+    addr_t start_pgn_a = proc_a.regs[0] >> PAGING64_ADDR_PT_SHIFT;
+    addr_t start_pgn_b = proc_b.regs[0] >> PAGING64_ADDR_PT_SHIFT;
+
     int seen[8] = {0};
     for (int p = 0; p < 3; ++p) {
-        addr_t pte_a = pte_get_entry(&mm_a, (addr_t)p, &proc_a);
-        addr_t pte_b = pte_get_entry(&mm_b, (addr_t)p, &proc_b);
+        addr_t pte_a = pte_get_entry(&mm_a, start_pgn_a + (addr_t)p, &proc_a);
+        addr_t pte_b = pte_get_entry(&mm_b, start_pgn_b + (addr_t)p, &proc_b);
         TEST_ASSERT(PAGING_PAGE_PRESENT(pte_a) != 0);
         TEST_ASSERT(PAGING_PAGE_PRESENT(pte_b) != 0);
 
@@ -262,55 +262,50 @@ static void run_it05(void)
     struct pcb_t proc_a, proc_b;
     struct mm_struct mm_a, mm_b;
 
-    /* RAM chi co 2 frame, SWAP = 0 -> B chi ALLOC duoc neu A thuc su tra frame */
     it_env_init(&env, 2, 0);
     it_proc_init(&env, &proc_a, &mm_a, 20051);
     it_proc_init(&env, &proc_b, &mm_b, 20052);
 
     addr_t page_sz = (addr_t)test_memphy_page_size();
     TEST_ASSERT_EQ(0, liballoc(&proc_a, 2 * page_sz, 0));
-    /* Luc nay RAM da het sach -> B xin 1 page phai bi tu choi */
     TEST_ASSERT_EQ(-1, liballoc(&proc_b, page_sz, 0));
 
-    /* Ket thuc / giai phong bo nho vat ly cua A -> B xin lai 2 page phai thanh cong */
     TEST_ASSERT_EQ(0, free_pcb_memph(&proc_a));
     TEST_ASSERT_EQ(0, liballoc(&proc_b, 2 * page_sz, 0));
     TEST_ASSERT_EQ(0, libwrite(&proc_b, (BYTE)0x6C, 0, 0));
 
-    uint32_t out = 0;
-    TEST_ASSERT_EQ(0, libread(&proc_b, 0, 0, &out));
-    TEST_ASSERT_EQ(0x6C, out);
+    uint32_t dst_reg = 7;
+    TEST_ASSERT_EQ(0, libread(&proc_b, 0, 0, &dst_reg));
+    TEST_ASSERT_EQ(0x6C, proc_b.regs[dst_reg]);
 
     it_cleanup_mm_structs(&mm_a);
     it_proc_destroy(&proc_b, &mm_b);
     it_env_destroy(&env);
 }
 
-/* IT06 & IT07: RAM nho, buoc phat sinh SWAP OUT roi SWAP IN va kiem tra bao toan du lieu */
+/* IT06: RAM nho, buoc phat sinh SWAP OUT */
 static void run_it06(void)
 {
     struct it_test_env env;
     struct pcb_t proc_a;
     struct mm_struct mm_a;
 
-    /* RAM = 2 frames, SWAP = 4 frames -> cap phat 5 pages ep 3 pages ra SWAP */
     it_env_init(&env, 2, 4);
     it_proc_init(&env, &proc_a, &mm_a, 2006);
 
     addr_t page_sz = (addr_t)test_memphy_page_size();
     TEST_ASSERT_EQ(0, liballoc(&proc_a, 5 * page_sz, 0));
 
-    /* Ghi mau du lieu duy nhat cho tung trang (0..4) */
     for (int p = 0; p < 5; ++p) {
         addr_t base = (addr_t)p * page_sz;
         TEST_ASSERT_EQ(0, libwrite(&proc_a, (BYTE)(0x20 + p), 0, base));
         TEST_ASSERT_EQ(0, libwrite(&proc_a, (BYTE)(0x90 + p), 0, base + page_sz - 1));
     }
 
-    /* Kiem tra thuc te co trang dang nam o SWAP (khong PRESENT nhung co bit SWAPPED) */
+    addr_t start_pgn = proc_a.regs[0] >> PAGING64_ADDR_PT_SHIFT;
     int swapped_count = 0;
     for (int p = 0; p < 5; ++p) {
-        addr_t pte = pte_get_entry(&mm_a, (addr_t)p, &proc_a);
+        addr_t pte = pte_get_entry(&mm_a, start_pgn + (addr_t)p, &proc_a);
         if (!PAGING_PAGE_PRESENT(pte) && (pte & PAGING_PTE_SWAPPED_MASK)) {
             swapped_count++;
         }
@@ -321,6 +316,7 @@ static void run_it06(void)
     it_env_destroy(&env);
 }
 
+/* IT07: SWAP IN khoi phuc nguyen ven du lieu trang bi day ra SWAP */
 static void run_it07(void)
 {
     struct it_test_env env;
@@ -339,14 +335,13 @@ static void run_it07(void)
         TEST_ASSERT_EQ(0, libwrite(&proc_a, (BYTE)(0x90 + p), 0, base + page_sz - 1));
     }
 
-    /* Doc nguoc tu trang 0 -> 4 buoc he thong SWAP IN lai toan bo cac trang da bi day ra SWAP */
+    uint32_t reg_head = 6, reg_tail = 7;
     for (int p = 0; p < 5; ++p) {
         addr_t base = (addr_t)p * page_sz;
-        uint32_t v_head = 0, v_tail = 0;
-        TEST_ASSERT_EQ(0, libread(&proc_a, 0, base, &v_head));
-        TEST_ASSERT_EQ(0, libread(&proc_a, 0, base + page_sz - 1, &v_tail));
-        TEST_ASSERT_EQ((uint32_t)(0x20 + p), v_head);
-        TEST_ASSERT_EQ((uint32_t)(0x90 + p), v_tail);
+        TEST_ASSERT_EQ(0, libread(&proc_a, 0, base, &reg_head));
+        TEST_ASSERT_EQ(0, libread(&proc_a, 0, base + page_sz - 1, &reg_tail));
+        TEST_ASSERT_EQ((uint64_t)(0x20 + p), proc_a.regs[reg_head]);
+        TEST_ASSERT_EQ((uint64_t)(0x90 + p), proc_a.regs[reg_tail]);
     }
 
     it_proc_destroy(&proc_a, &mm_a);
@@ -370,15 +365,21 @@ static void run_it08(void)
     }
 
     for (int r = 0; r < 5; ++r) {
-        TEST_ASSERT(mm.symrgtbl[r].rg_end <= mm.symrgtbl[r + 1].rg_start);
+        int id0 = -1, id1 = -1;
+        struct vm_rg_struct *rg0 = get_symrg_byaddr(&mm, proc.regs[r], &id0);
+        struct vm_rg_struct *rg1 = get_symrg_byaddr(&mm, proc.regs[r + 1], &id1);
+        TEST_ASSERT(rg0 != NULL && rg1 != NULL);
+        if (rg0 && rg1 && rg0->vmaid == rg1->vmaid) {
+            TEST_ASSERT(rg0->rg_end <= rg1->rg_start);
+        }
     }
 
+    uint32_t reg_v0 = 8, reg_v1 = 9;
     for (int r = 0; r < 6; ++r) {
-        uint32_t v0 = 0, v1 = 0;
-        TEST_ASSERT_EQ(0, libread(&proc, (uint32_t)r, 0, &v0));
-        TEST_ASSERT_EQ(0, libread(&proc, (uint32_t)r, 511, &v1));
-        TEST_ASSERT_EQ((uint32_t)(0x40 + r), v0);
-        TEST_ASSERT_EQ((uint32_t)(0xA0 + r), v1);
+        TEST_ASSERT_EQ(0, libread(&proc, (uint32_t)r, 0, &reg_v0));
+        TEST_ASSERT_EQ(0, libread(&proc, (uint32_t)r, 511, &reg_v1));
+        TEST_ASSERT_EQ((uint64_t)(0x40 + r), proc.regs[reg_v0]);
+        TEST_ASSERT_EQ((uint64_t)(0xA0 + r), proc.regs[reg_v1]);
     }
 
     it_proc_destroy(&proc, &mm);
@@ -395,38 +396,35 @@ static void run_it09(void)
     it_env_init(&env, 8, 4);
     it_proc_init(&env, &proc, &mm, 2009);
 
-    /* Cap 4 vung 512B: R0 [0,512), R1 [512,1024), R2 [1024,1536), R3 [1536,2048) */
     for (int r = 0; r < 4; ++r) {
         TEST_ASSERT_EQ(0, liballoc(&proc, 512, (uint32_t)r));
     }
     TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0xB1, 1, 10));
     TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0xB3, 3, 10));
 
-    /* Giai phong xen ke R0 va R2 */
     TEST_ASSERT_EQ(0, libfree(&proc, 0));
     TEST_ASSERT_EQ(0, libfree(&proc, 2));
 
-    /* Cap phat lai R4 (256B) va R5 (512B) -> phai lay tu lo trong R0 / R2 ma khong de len R1, R3 */
     TEST_ASSERT_EQ(0, liballoc(&proc, 256, 4));
     TEST_ASSERT_EQ(0, liballoc(&proc, 512, 5));
     TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0xE4, 4, 10));
     TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0xE5, 5, 10));
 
-    uint32_t v1 = 0, v3 = 0, v4 = 0, v5 = 0;
-    TEST_ASSERT_EQ(0, libread(&proc, 1, 10, &v1));
-    TEST_ASSERT_EQ(0, libread(&proc, 3, 10, &v3));
-    TEST_ASSERT_EQ(0, libread(&proc, 4, 10, &v4));
-    TEST_ASSERT_EQ(0, libread(&proc, 5, 10, &v5));
-    TEST_ASSERT_EQ(0xB1, v1);
-    TEST_ASSERT_EQ(0xB3, v3);
-    TEST_ASSERT_EQ(0xE4, v4);
-    TEST_ASSERT_EQ(0xE5, v5);
+    uint32_t dst_reg = 7;
+    TEST_ASSERT_EQ(0, libread(&proc, 1, 10, &dst_reg));
+    TEST_ASSERT_EQ(0xB1, proc.regs[dst_reg]);
+    TEST_ASSERT_EQ(0, libread(&proc, 3, 10, &dst_reg));
+    TEST_ASSERT_EQ(0xB3, proc.regs[dst_reg]);
+    TEST_ASSERT_EQ(0, libread(&proc, 4, 10, &dst_reg));
+    TEST_ASSERT_EQ(0xE4, proc.regs[dst_reg]);
+    TEST_ASSERT_EQ(0, libread(&proc, 5, 10, &dst_reg));
+    TEST_ASSERT_EQ(0xE5, proc.regs[dst_reg]);
 
     it_proc_destroy(&proc, &mm);
     it_env_destroy(&env);
 }
 
-/* IT10 & IT11: User doc/ghi vao kernel region bi tu choi, bao ve du lieu kernel */
+/* IT10: Tu choi User READ vao vung nho Kernel */
 static void run_it10(void)
 {
     struct it_test_env env;
@@ -436,17 +434,16 @@ static void run_it10(void)
     it_env_init(&env, 8, 4);
     it_proc_init(&env, &proc, &mm, 2010);
 
-    /* Kernel cap phat region 5 */
     TEST_ASSERT_EQ(0, libkmem_malloc(&proc, 256, 5));
 
-    /* User co tinh doc region 5 (thuoc kernel, khong nam trong proc.mm->symrgtbl) -> phai bi tu choi */
-    uint32_t leak = 0;
-    TEST_ASSERT_EQ(-1, libread(&proc, 5, 0, &leak));
+    uint32_t dst_reg = 7;
+    TEST_ASSERT_EQ(-1, libread(&proc, 5, 0, &dst_reg));
 
     it_proc_destroy(&proc, &mm);
     it_env_destroy(&env);
 }
 
+/* IT11: Tu choi User WRITE vao vung nho Kernel, du lieu Kernel duoc bao toan */
 static void run_it11(void)
 {
     struct it_test_env env;
@@ -456,29 +453,25 @@ static void run_it11(void)
     it_env_init(&env, 8, 4);
     it_proc_init(&env, &proc, &mm, 2011);
 
-    /* Cap phat User region 0 va Kernel region 5, nap du lieu mau vao Kernel qua copy_from_user */
     TEST_ASSERT_EQ(0, liballoc(&proc, 64, 0));
     TEST_ASSERT_EQ(0, libkmem_malloc(&proc, 64, 5));
     TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0x4B, 0, 0));
-    /* Copy tu User (source = 0) -> Kernel (destination = 5) */
     TEST_ASSERT_EQ(0, libkmem_copy_from_user(&proc, 0, 5, 0, 1));
 
-    /* User co tinh ghi de vao region 5 cua Kernel -> bi tu choi */
     TEST_ASSERT_EQ(-1, libwrite(&proc, (BYTE)0xFF, 5, 0));
 
-    /* Xoa du lieu phia User thanh 0x00 roi copy nguoc tu Kernel ve de xac nhan Kernel van con 0x4B */
     TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0x00, 0, 0));
-    /* Copy tu Kernel (source = 5) -> User (destination = 0) */
     TEST_ASSERT_EQ(0, libkmem_copy_to_user(&proc, 5, 0, 0, 1));
-    uint32_t k_intact = 0;
-    TEST_ASSERT_EQ(0, libread(&proc, 0, 0, &k_intact));
-    TEST_ASSERT_EQ(0x4B, k_intact);
+
+    uint32_t dst_reg = 7;
+    TEST_ASSERT_EQ(0, libread(&proc, 0, 0, &dst_reg));
+    TEST_ASSERT_EQ(0x4B, proc.regs[dst_reg]);
 
     it_proc_destroy(&proc, &mm);
     it_env_destroy(&env);
 }
 
-/* IT12 & IT13: COPY FROM USER va COPY TO USER vat ngang ranh gioi nhieu trang */
+/* IT12: COPY FROM USER vat ngang ranh gioi nhieu trang */
 static void run_it12(void)
 {
     struct it_test_env env;
@@ -492,16 +485,13 @@ static void run_it12(void)
     TEST_ASSERT_EQ(0, liballoc(&proc, 2 * page_sz, 0));
     TEST_ASSERT_EQ(0, libkmem_malloc(&proc, (uint32_t)(2 * page_sz), 1));
 
-    /* Ghi 32 byte vat ngang ranh gioi page 0 -> page 1 ben User */
     addr_t start = page_sz - 16;
     for (int i = 0; i < 32; ++i) {
         TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)(0x50 + i), 0, start + (addr_t)i));
     }
 
-    /* Copy tu User (rg 0) -> Kernel (rg 1) */
     TEST_ASSERT_EQ(0, libkmem_copy_from_user(&proc, 0, 1, start, 32));
 
-    /* Xac minh truc tiep tren khung vat ly cua Kernel */
     addr_t kpte1 = pte_get_entry(&env.kmm, 1, &proc);
     TEST_ASSERT(PAGING_PAGE_PRESENT(kpte1) != 0);
     BYTE kbyte_after_boundary = 0;
@@ -512,6 +502,7 @@ static void run_it12(void)
     it_env_destroy(&env);
 }
 
+/* IT13: COPY TO USER vat ngang ranh gioi nhieu trang */
 static void run_it13(void)
 {
     struct it_test_env env;
@@ -530,17 +521,17 @@ static void run_it13(void)
         TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)(0x70 + i), 0, start + (addr_t)i));
     }
     TEST_ASSERT_EQ(0, libkmem_copy_from_user(&proc, 0, 1, start, 32));
-    /* Ghi de rac 0xEE vao User */
+
     for (int i = 0; i < 32; ++i) {
         TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0xEE, 0, start + (addr_t)i));
     }
 
-    /* COPY TO USER khoi phuc lai toan bo 32 byte vat ngang 2 trang */
-   TEST_ASSERT_EQ(0, libkmem_copy_to_user(&proc, 1, 0, start, 32));
+    TEST_ASSERT_EQ(0, libkmem_copy_to_user(&proc, 1, 0, start, 32));
+
+    uint32_t dst_reg = 7;
     for (int i = 0; i < 32; ++i) {
-        uint32_t val = 0;
-        TEST_ASSERT_EQ(0, libread(&proc, 0, start + (addr_t)i, &val));
-        TEST_ASSERT_EQ((uint32_t)(0x70 + i), val);
+        TEST_ASSERT_EQ(0, libread(&proc, 0, start + (addr_t)i, &dst_reg));
+        TEST_ASSERT_EQ((uint64_t)(0x70 + i), proc.regs[dst_reg]);
     }
 
     it_proc_destroy(&proc, &mm);
@@ -557,6 +548,7 @@ struct it14_worker_arg {
 static void *it14_worker(void *arg)
 {
     struct it14_worker_arg *w = (struct it14_worker_arg *)arg;
+    uint32_t dst_reg = 7;
     for (int round = 0; round < 3; ++round) {
         if (liballoc(w->proc, 1024, 0) < 0) {
             w->status = -1;
@@ -569,9 +561,8 @@ static void *it14_worker(void *arg)
             }
         }
         for (int i = 0; i < 16; ++i) {
-            uint32_t v = 0;
-            if (libread(w->proc, 0, (addr_t)(i * 32), &v) < 0 ||
-                v != (uint32_t)(BYTE)(w->seed + round + i)) {
+            if (libread(w->proc, 0, (addr_t)(i * 32), &dst_reg) < 0 ||
+                w->proc->regs[dst_reg] != (uint64_t)(BYTE)(w->seed + round + i)) {
                 w->status = -3;
                 return NULL;
             }
@@ -632,16 +623,13 @@ static void run_it15(void)
     TEST_ASSERT_EQ(0, libwrite(&proc_a, (BYTE)0xAA, 0, 0));
     TEST_ASSERT_EQ(0, libwrite(&proc_b, (BYTE)0xBB, 0, page_sz + 12));
 
-    /* Process A ket thuc -> giai phong toan bo tai nguyen cua A */
     TEST_ASSERT_EQ(0, free_pcb_memph(&proc_a));
     TEST_ASSERT(mm_a.fifo_pgn == NULL);
 
-    /* Process B van hoat dong hoan hao va doc dung du lieu cua minh */
-    uint32_t vb = 0;
-    TEST_ASSERT_EQ(0, libread(&proc_b, 0, page_sz + 12, &vb));
-    TEST_ASSERT_EQ(0xBB, vb);
+    uint32_t dst_reg = 7;
+    TEST_ASSERT_EQ(0, libread(&proc_b, 0, page_sz + 12, &dst_reg));
+    TEST_ASSERT_EQ(0xBB, proc_b.regs[dst_reg]);
 
-    /* Process B co the xin them trang nho tu cac frame ma A vua tra lai */
     TEST_ASSERT_EQ(0, liballoc(&proc_b, 2 * page_sz, 1));
     TEST_ASSERT_EQ(0, libwrite(&proc_b, (BYTE)0xCC, 1, 0));
 
@@ -652,6 +640,186 @@ static void run_it15(void)
     it_env_destroy(&env);
 }
 
+/* IT16 (MỚI): Global Page Replacement end-to-end giua 2 tien trinh (SWAP OUT A -> B dung RAM -> SWAP IN A) */
+static void run_it16(void)
+{
+    struct it_test_env env;
+    struct pcb_t proc_a, proc_b;
+    struct mm_struct mm_a, mm_b;
+
+    /* Tong RAM chi co 2 frame, SWAP co 4 frame */
+    it_env_init(&env, 2, 4);
+    it_proc_init(&env, &proc_a, &mm_a, 20161);
+    it_proc_init(&env, &proc_b, &mm_b, 20162);
+
+    addr_t page_sz = (addr_t)test_memphy_page_size();
+
+    /* Process A chiem 2 frame RAM va ghi du lieu dac trung */
+    TEST_ASSERT_EQ(0, liballoc(&proc_a, 2 * page_sz, 0));
+    TEST_ASSERT_EQ(0, libwrite(&proc_a, (BYTE)0xA1, 0, 10));
+    TEST_ASSERT_EQ(0, libwrite(&proc_a, (BYTE)0xA2, 0, page_sz + 20));
+
+    /* Process B xin 2 trang -> ep toan bo trang cua A sang SWAP va chiem RAM */
+    TEST_ASSERT_EQ(0, liballoc(&proc_b, 2 * page_sz, 0));
+    TEST_ASSERT_EQ(0, libwrite(&proc_b, (BYTE)0xB1, 0, 10));
+    TEST_ASSERT_EQ(0, libwrite(&proc_b, (BYTE)0xB2, 0, page_sz + 20));
+
+    /* Ca A lan B doc lai du lieu -> kich hoat SWAP IN qua lai nhung du lieu phai nguyen ven */
+    uint32_t dst_reg = 7;
+    TEST_ASSERT_EQ(0, libread(&proc_a, 0, 10, &dst_reg));
+    TEST_ASSERT_EQ(0xA1, proc_a.regs[dst_reg]);
+    TEST_ASSERT_EQ(0, libread(&proc_a, 0, page_sz + 20, &dst_reg));
+    TEST_ASSERT_EQ(0xA2, proc_a.regs[dst_reg]);
+
+    TEST_ASSERT_EQ(0, libread(&proc_b, 0, 10, &dst_reg));
+    TEST_ASSERT_EQ(0xB1, proc_b.regs[dst_reg]);
+    TEST_ASSERT_EQ(0, libread(&proc_b, 0, page_sz + 20, &dst_reg));
+    TEST_ASSERT_EQ(0xB2, proc_b.regs[dst_reg]);
+
+    it_proc_destroy(&proc_a, &mm_a);
+    it_proc_destroy(&proc_b, &mm_b);
+    verify_memphy_invariants(&env.mram, 2);
+    verify_memphy_invariants(&env.mswp, 4);
+    it_env_destroy(&env);
+}
+
+/* IT17 (MỚI): Tich hop 3 VMA (SMALL / MEDIUM / LARGE) tren bang phan trang 5 cap & Syscall 17 */
+static void run_it17(void)
+{
+    struct it_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+
+    it_env_init(&env, 32, 8);
+    it_proc_init(&env, &proc, &mm, 2017);
+
+    /* Cap phat 3 vung o 3 dai kich thuoc khac nhau */
+    TEST_ASSERT_EQ(0, liballoc(&proc, SMALL_MAX_SIZE, 0));           /* VMA_SMALL */
+    TEST_ASSERT_EQ(0, liballoc(&proc, MEDIUM_MAX_SIZE, 1));          /* VMA_MEDIUM */
+    TEST_ASSERT_EQ(0, liballoc(&proc, MEDIUM_MAX_SIZE + 4096, 2));   /* VMA_LARGE (2 pages) */
+
+    /* Ghi va doc xuyen ranh gioi trang tren VMA_LARGE */
+    addr_t page_sz = (addr_t)test_memphy_page_size();
+    TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0x11, 0, SMALL_MAX_SIZE - 1));
+    TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0x22, 1, MEDIUM_MAX_SIZE - 1));
+    TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0x33, 2, page_sz - 1));
+    TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0x44, 2, page_sz));
+
+    uint32_t dst_reg = 7;
+    TEST_ASSERT_EQ(0, libread(&proc, 0, SMALL_MAX_SIZE - 1, &dst_reg));
+    TEST_ASSERT_EQ(0x11, proc.regs[dst_reg]);
+    TEST_ASSERT_EQ(0, libread(&proc, 1, MEDIUM_MAX_SIZE - 1, &dst_reg));
+    TEST_ASSERT_EQ(0x22, proc.regs[dst_reg]);
+    TEST_ASSERT_EQ(0, libread(&proc, 2, page_sz - 1, &dst_reg));
+    TEST_ASSERT_EQ(0x33, proc.regs[dst_reg]);
+    TEST_ASSERT_EQ(0, libread(&proc, 2, page_sz, &dst_reg));
+    TEST_ASSERT_EQ(0x44, proc.regs[dst_reg]);
+
+    /* Free VMA_MEDIUM khong anh huong den VMA_SMALL va VMA_LARGE */
+    TEST_ASSERT_EQ(0, libfree(&proc, 1));
+    TEST_ASSERT_EQ(-1, libread(&proc, 1, 0, &dst_reg));
+    TEST_ASSERT_EQ(0, libread(&proc, 2, page_sz, &dst_reg));
+    TEST_ASSERT_EQ(0x44, proc.regs[dst_reg]);
+
+    it_proc_destroy(&proc, &mm);
+    verify_memphy_invariants(&env.mram, 32);
+    it_env_destroy(&env);
+}
+
+/* IT18 (MỚI): Tich hop DMA memcpy bat dong bo qua phan trang 5 cap + kiem tra chan hazard */
+static void run_it18(void)
+{
+    struct it_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+    struct code_seg_t code;
+    struct inst_t insts[2];
+
+    it_env_init(&env, 16, 4);
+    it_proc_init(&env, &proc, &mm, 2018);
+
+    /* Cap phat 2 vung LARGE (2 trang = 8192B) de test DMA dich dia chi vat ly qua 2 trang */
+    addr_t page_sz = (addr_t)test_memphy_page_size();
+    TEST_ASSERT_EQ(0, liballoc(&proc, 2 * page_sz, 1));
+    TEST_ASSERT_EQ(0, liballoc(&proc, 2 * page_sz, 2));
+
+    /* Nap du lieu mau vao vung nguon (reg 1) o ca trang 0 va trang 1 */
+    TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0x5A, 1, 0));
+    TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0xA5, 1, page_sz + 100));
+
+    /* Phat lenh DMA copy 6000 byte (tu dong cat thanh 2 goi 4096B + 1904B) */
+    TEST_ASSERT_EQ(0, libmem_dma_memcpy(&proc, 1, 2, 0, 6000));
+    TEST_ASSERT_EQ(2, libmem_dma_inflight(proc.pid));
+
+    /* Gia lap CPU sap thuc thi lenh READ vao reg 2 -> phai bi chan (RAW hazard) */
+    memset(&code, 0, sizeof(code));
+    code.size = 2;
+    code.text = insts;
+    insts[0].opcode = READ; insts[0].arg_0 = 2; insts[0].arg_1 = 0; insts[0].arg_2 = 5;
+    insts[1].opcode = FREE; insts[1].arg_0 = 1;
+    proc.code = &code;
+    proc.pc = 0;
+    TEST_ASSERT_EQ(1, libmem_dma_blocked(&proc));
+
+    /* Lenh FREE reg 1 (vung nguon) cung phai bi chan (WAR hazard) */
+    proc.pc = 1;
+    TEST_ASSERT_EQ(1, libmem_dma_blocked(&proc));
+
+    /* Hoan tat 2 ngat DMA -> CPU duoc mo khoa */
+    uint32_t c_pid, c_src, c_dst, c_len;
+    TEST_ASSERT_EQ(0, libmem_dma_complete(&c_pid, &c_src, &c_dst, &c_len));
+    TEST_ASSERT_EQ(0, libmem_dma_complete(&c_pid, &c_src, &c_dst, &c_len));
+    TEST_ASSERT_EQ(0, libmem_dma_inflight(proc.pid));
+    TEST_ASSERT_EQ(0, libmem_dma_blocked(&proc));
+
+    it_proc_destroy(&proc, &mm);
+    verify_memphy_invariants(&env.mram, 16);
+    it_env_destroy(&env);
+}
+static void run_it19(void)
+{
+    struct it_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+    const addr_t page_size = PAGING64_PAGESZ;
+    const addr_t pgn_a = 0x12345ULL;
+    const addr_t pgn_b = (1ULL << 36) | 0x12345ULL;
+    const addr_t va_a = pgn_a * page_size;
+    const addr_t va_b = pgn_b * page_size;
+
+    it_env_init(&env, 4, 2);
+    it_proc_init(&env, &proc, &mm, 5001);
+
+    struct vm_rg_struct rg_a = {0}, rg_b = {0};
+    TEST_ASSERT_EQ(0, (int)vm_map_ram(&proc, va_a, va_a + page_size, va_a, 1, &rg_a));
+    TEST_ASSERT_EQ(0, (int)vm_map_ram(&proc, va_b, va_b + page_size, va_b, 1, &rg_b));
+
+    addr_t pte_a = pte_get_entry(&mm, pgn_a, &proc);
+    addr_t pte_b = pte_get_entry(&mm, pgn_b, &proc);
+    TEST_ASSERT(PAGING_PAGE_PRESENT(pte_a));
+    TEST_ASSERT(PAGING_PAGE_PRESENT(pte_b));
+    TEST_ASSERT_NEQ(PAGING_FPN(pte_a), PAGING_FPN(pte_b));
+
+    BYTE read_a = 0, read_b = 0;
+    TEST_ASSERT_EQ(0, MEMPHY_write(&env.mram, PAGING_FPN(pte_a) * page_size + 17, (BYTE)0x3C));
+    TEST_ASSERT_EQ(0, MEMPHY_write(&env.mram, PAGING_FPN(pte_b) * page_size + 17, (BYTE)0xC3));
+    TEST_ASSERT_EQ(0, MEMPHY_read(&env.mram, PAGING_FPN(pte_a) * page_size + 17, &read_a));
+    TEST_ASSERT_EQ(0, MEMPHY_read(&env.mram, PAGING_FPN(pte_b) * page_size + 17, &read_b));
+    TEST_ASSERT_EQ((BYTE)0x3C, read_a);
+    TEST_ASSERT_EQ((BYTE)0xC3, read_b);
+
+    /* Thu hoi frame bang cach duyet cay 5 cap du VMA sbrk khong chua 2 trang nay */
+    TEST_ASSERT_EQ(0, free_pcb_memph(&proc));
+    TEST_ASSERT(env.mram.used_fp_list == NULL);
+    TEST_ASSERT(env.mswp.used_fp_list == NULL);
+    TEST_ASSERT_EQ(0, pte_get_entry(&mm, pgn_a, &proc));
+    TEST_ASSERT_EQ(0, pte_get_entry(&mm, pgn_b, &proc));
+    verify_memphy_invariants(&env.mram, 4);
+    verify_memphy_invariants(&env.mswp, 2);
+
+    it_cleanup_mm_structs(&mm);
+    it_env_destroy(&env);
+}
 #define RUN_TEST(id, description, function) do { \
     test_begin((id), (description)); \
     function(); \
@@ -675,7 +843,10 @@ int main(void)
     RUN_TEST("IT13", "COPY TO USER across multi-page boundary", run_it13);
     RUN_TEST("IT14", "Concurrent multi-process ALLOC/WRITE/READ/FREE", run_it14);
     RUN_TEST("IT15", "Process termination reclaims resources while peer continues", run_it15);
-
+    RUN_TEST("IT16", "Global page replacement end-to-end across two processes", run_it16);
+    RUN_TEST("IT17", "Multi-VMA (SMALL/MEDIUM/LARGE) 5-level paging lifecycle", run_it17);
+    RUN_TEST("IT18", "End-to-end DMA multi-page translation and hazard blocking", run_it18);
+    RUN_TEST("IT19", "End-to-end mapping and reclaim across separate PGD branches", run_it19);
     test_summary();
     return 0;
 }

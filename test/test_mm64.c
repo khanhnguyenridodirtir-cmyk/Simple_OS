@@ -1,5 +1,6 @@
 #include "test_helpers.h"
 #include "libmem.h"
+#include "mm64.h"
 #include "queue.h"
 
 #include <pthread.h>
@@ -9,52 +10,22 @@
 #define MM_TEST_FRAMES 16
 #define MM_TEST_SWP_FRAMES 16
 
+/* Khai bao prototype cac ham trong mm-vm.c / libmem.c chua co trong header */
+int free_pcb_memph(struct pcb_t *caller);
+struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, addr_t alignedsz);
+int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, addr_t vmaend);
+
 struct mm_test_env {
     struct krnl_t krnl;
     struct memphy_struct mram;
     struct memphy_struct mswp;
     struct memphy_struct *mswp_arr[PAGING_MAX_MMSWP];
+    struct mm_struct kmm;
     struct queue_t running_list;
     int mram_ready;
     int mswp_ready;
+    int kmm_ready;
 };
-
-static void mm_env_init(struct mm_test_env *env, int ram_frames, int swp_frames)
-{
-    memset(env, 0, sizeof(*env));
-    addr_t page_sz = (addr_t)test_memphy_page_size();
-
-    if (ram_frames > 0) {
-        env->mram_ready = (test_memphy_init(&env->mram, (addr_t)ram_frames * page_sz, 1) == 0);
-    }
-    if (swp_frames > 0) {
-        env->mswp_ready = (test_memphy_init(&env->mswp, (addr_t)swp_frames * page_sz, 1) == 0);
-    }
-
-    env->mswp_arr[0] = env->mswp_ready ? &env->mswp : NULL;
-    env->krnl.mram = env->mram_ready ? &env->mram : NULL;
-    env->krnl.mswp = env->mswp_arr;
-    env->krnl.active_mswp = env->mswp_ready ? &env->mswp : NULL;
-    env->krnl.active_mswp_id = 0;
-    env->krnl.running_list = &env->running_list;
-}
-
-static void mm_env_destroy(struct mm_test_env *env)
-{
-    test_memphy_destroy(&env->mram, env->mram_ready);
-    test_memphy_destroy(&env->mswp, env->mswp_ready);
-}
-
-static void mm_proc_init(struct pcb_t *proc, struct mm_struct *mm,
-                         struct krnl_t *krnl, uint32_t pid)
-{
-    memset(proc, 0, sizeof(*proc));
-    memset(mm, 0, sizeof(*mm));
-    proc->pid = pid;
-    proc->krnl = krnl;
-    proc->mm = mm;
-    init_mm(mm, proc);
-}
 
 static void mm_proc_cleanup_tables(struct mm_struct *mm)
 {
@@ -80,13 +51,63 @@ static void mm_proc_cleanup_tables(struct mm_struct *mm)
         free(vtmp);
     }
 
-    /* Do not free p4d/pud/pmd/pt as flat arrays.
-     * The 5-level implementation owns a tree of dynamically allocated tables.
-     */
     mm_free_page_tables(mm);
 }
 
-/* MM01: Khởi tạo MM */
+static void mm_env_init(struct mm_test_env *env, int ram_frames, int swp_frames)
+{
+    memset(env, 0, sizeof(*env));
+    addr_t page_sz = (addr_t)test_memphy_page_size();
+
+    if (ram_frames > 0) {
+        env->mram_ready = (test_memphy_init(&env->mram, (addr_t)ram_frames * page_sz, 1) == 0);
+    }
+    if (swp_frames > 0) {
+        env->mswp_ready = (test_memphy_init(&env->mswp, (addr_t)swp_frames * page_sz, 1) == 0);
+    }
+
+    env->mswp_arr[0] = env->mswp_ready ? &env->mswp : NULL;
+    env->krnl.mram = env->mram_ready ? &env->mram : NULL;
+    env->krnl.mswp = env->mswp_arr;
+    env->krnl.active_mswp = env->mswp_ready ? &env->mswp : NULL;
+    env->krnl.active_mswp_id = 0;
+    env->krnl.running_list = &env->running_list;
+
+    init_mm(&env->kmm, NULL);
+    env->krnl.mm = &env->kmm;
+    env->kmm_ready = 1;
+}
+
+static void mm_env_destroy(struct mm_test_env *env)
+{
+    if (env->kmm_ready) {
+        struct pcb_t dummy = {0};
+        dummy.krnl = &env->krnl;
+        dummy.mm = &env->kmm;
+        free_pcb_memph(&dummy);
+        mm_proc_cleanup_tables(&env->kmm);
+    }
+    test_memphy_destroy(&env->mram, env->mram_ready);
+    test_memphy_destroy(&env->mswp, env->mswp_ready);
+}
+
+static void mm_proc_init(struct pcb_t *proc, struct mm_struct *mm,
+                         struct krnl_t *krnl, uint32_t pid)
+{
+    memset(proc, 0, sizeof(*proc));
+    memset(mm, 0, sizeof(*mm));
+    proc->pid = pid;
+    proc->krnl = krnl;
+    proc->mm = mm;
+    init_mm(mm, proc);
+
+    if (krnl != NULL && krnl->running_list != NULL &&
+        krnl->running_list->size < MAX_QUEUE_SIZE) {
+        krnl->running_list->proc[krnl->running_list->size++] = proc;
+    }
+}
+
+/* MM01: Khởi tạo MM cho User (3 VMA) và Kernel (1 VMA) */
 static void run_mm01(void)
 {
     struct mm_test_env env;
@@ -103,10 +124,25 @@ static void run_mm01(void)
     int ret = init_mm(&mm, &proc);
     TEST_ASSERT_EQ(0, ret);
     TEST_ASSERT(mm.mmap != NULL);
-    TEST_ASSERT_EQ(0, mm.mmap->vm_id);
-    TEST_ASSERT_EQ(0, mm.mmap->vm_start);
-    TEST_ASSERT_EQ(0, mm.mmap->sbrk);
     TEST_ASSERT(mm.fifo_pgn == NULL);
+
+    /* Kiem tra du 3 VMA: VMA_SMALL [0, 2^55), VMA_MEDIUM [2^55, 2^56), VMA_LARGE [2^56, 2^57) */
+    struct vm_area_struct *v0 = get_vma_by_num(&mm, VMA_SMALL);
+    struct vm_area_struct *v1 = get_vma_by_num(&mm, VMA_MEDIUM);
+    struct vm_area_struct *v2 = get_vma_by_num(&mm, VMA_LARGE);
+    TEST_ASSERT(v0 != NULL && v1 != NULL && v2 != NULL);
+    TEST_ASSERT_EQ(0ULL, v0->vm_start);
+    TEST_ASSERT_EQ(1ULL << 55, v0->vm_end);
+    TEST_ASSERT_EQ(v0->vm_start, v0->sbrk);
+    TEST_ASSERT_EQ(1ULL << 55, v1->vm_start);
+    TEST_ASSERT_EQ(1ULL << 56, v1->vm_end);
+    TEST_ASSERT_EQ(1ULL << 56, v2->vm_start);
+    TEST_ASSERT_EQ(1ULL << 57, v2->vm_end);
+
+    /* Kernel MM (caller == NULL) chi co 1 VMA duy nhat id = 0 */
+    TEST_ASSERT(env.kmm.mmap != NULL);
+    TEST_ASSERT_EQ(0, env.kmm.mmap->vm_id);
+    TEST_ASSERT(env.kmm.mmap->vm_next == NULL);
 
     mm_proc_cleanup_tables(&mm);
     mm_env_destroy(&env);
@@ -122,13 +158,9 @@ static void run_mm02(void)
     mm_env_init(&env, 4, 4);
     mm_proc_init(&proc, &mm, &env.krnl, 2);
 
-    /* Root PGD must exist after init_mm(). */
     TEST_ASSERT(mm.pgd != NULL);
-
-    /* An unmapped page must return an empty PTE. */
     TEST_ASSERT_EQ(0, pte_get_entry(&mm, 0, &proc));
 
-    /* Mapping a page must create the required child-table path. */
     TEST_ASSERT_EQ(0, pte_set_fpn(&mm, 0, 3, &proc));
     addr_t pte = pte_get_entry(&mm, 0, &proc);
     TEST_ASSERT(PAGING_PAGE_PRESENT(pte) != 0);
@@ -142,8 +174,6 @@ static void run_mm02(void)
 static void run_mm03(void)
 {
     addr_t pgd = 0, p4d = 0, pud = 0, pmd = 0, pt = 0;
-    /* Đặt các chỉ số phân biệt ở từng cấp 9-bit:
-       PGD=0x15, P4D=0x2A, PUD=0x3F, PMD=0x105, PT=0x1FE, offset=0xABC */
     addr_t addr = ((addr_t)0x15ULL << 48) |
                   ((addr_t)0x2AULL << 39) |
                   ((addr_t)0x3FULL << 30) |
@@ -184,7 +214,7 @@ static void run_mm04(void)
 static void run_mm05(void)
 {
     addr_t pgd = 0, p4d = 0, pud = 0, pmd = 0, pt = 0;
-    addr_t addr = 3ULL * PAGING64_PAGESZ; /* Đầu page 3 */
+    addr_t addr = 3ULL * PAGING64_PAGESZ;
 
     TEST_ASSERT_EQ(0, PAGING64_ADDR_OFFST(addr));
     TEST_ASSERT_EQ(0, get_pd_from_address(addr, &pgd, &p4d, &pud, &pmd, &pt));
@@ -257,7 +287,7 @@ static void run_mm09(void)
     mm_env_destroy(&env);
 }
 
-/* MM10: Đọc lại PTE thông qua API, không phụ thuộc layout nội bộ */
+/* MM10: Đọc lại PTE thông qua API */
 static void run_mm10(void)
 {
     struct mm_test_env env;
@@ -296,7 +326,6 @@ static void run_mm11(void)
     TEST_ASSERT(PAGING_PAGE_PRESENT(pte) != 0);
     TEST_ASSERT_EQ(7, PAGING_FPN(pte));
 
-    /* Chuyển sang SWAP rồi nạp ngược lại FPN mới */
     TEST_ASSERT_EQ(0, pte_set_swap(&proc, 2, 0, 3));
     TEST_ASSERT_EQ(0, pte_set_fpn(&mm, 2, 5, &proc));
     pte = pte_get_entry(&mm, 2, &proc);
@@ -413,14 +442,13 @@ static void run_mm15(void)
     mm_env_destroy(&env);
 }
 
-/* MM16: Mapping khi RAM và SWAP đều không đủ */
+/* MM16: Mapping khi RAM và SWAP đều không đủ -> rollback nguyên vẹn frame */
 static void run_mm16(void)
 {
     struct mm_test_env env;
     struct pcb_t proc;
     struct mm_struct mm;
 
-    /* Chỉ có 2 frame RAM và 1 frame SWAP = tối đa 3 trang, xin 5 trang phải thất bại */
     mm_env_init(&env, 2, 1);
     mm_proc_init(&proc, &mm, &env.krnl, 16);
 
@@ -428,9 +456,11 @@ static void run_mm16(void)
     addr_t ret = vm_map_ram(&proc, 0, 5ULL * PAGING64_PAGESZ, 0, 5, &ret_rg);
     TEST_ASSERT_EQ(-1, (int)ret);
 
-    /* Đảm bảo page chưa được map bừa và invariant vật lý vẫn bảo toàn */
     TEST_ASSERT_EQ(0, PAGING_PAGE_PRESENT(pte_get_entry(&mm, 4, &proc)));
     verify_memphy_invariants(&env.mram, 2);
+    verify_memphy_invariants(&env.mswp, 1);
+    TEST_ASSERT(env.mram.used_fp_list == NULL);
+    TEST_ASSERT(env.mswp.used_fp_list == NULL);
 
     free_pcb_memph(&proc);
     mm_proc_cleanup_tables(&mm);
@@ -473,7 +503,6 @@ static void run_mm18(void)
     struct pcb_t proc;
     struct mm_struct mm;
 
-    /* 3 RAM frames, 4 SWAP frames -> map 5 pages sẽ đẩy 2 page sang SWAP */
     mm_env_init(&env, 3, 4);
     mm_proc_init(&proc, &mm, &env.krnl, 18);
 
@@ -484,13 +513,11 @@ static void run_mm18(void)
     TEST_ASSERT_EQ(0, ret);
     TEST_ASSERT(mm.fifo_pgn == NULL);
 
-    /* Toàn bộ frame trên cả RAM và SWAP phải quay về free list */
     verify_memphy_invariants(&env.mram, 3);
     verify_memphy_invariants(&env.mswp, 4);
     TEST_ASSERT(env.mram.used_fp_list == NULL);
     TEST_ASSERT(env.mswp.used_fp_list == NULL);
 
-    /* PTE đã được xóa sạch */
     for (int i = 0; i < 5; ++i) {
         TEST_ASSERT_EQ(0, pte_get_entry(&mm, (addr_t)i, &proc));
     }
@@ -509,14 +536,11 @@ static void run_mm19(void)
     mm_env_init(&env, 4, 4);
     mm_proc_init(&proc, &mm, &env.krnl, 19);
 
-    /* Truyền MM NULL phải từ chối an toàn */
     TEST_ASSERT_EQ(-1, pte_set_fpn(NULL, 0, 1, NULL));
     TEST_ASSERT_EQ(-1, pte_set_swap(NULL, 0, 0, 1));
     TEST_ASSERT_EQ(0, pte_get_entry(NULL, 0, NULL));
 
-    /* Địa chỉ không căn chỉnh page trong vm_map_kernel phải bị từ chối */
     struct vm_rg_struct krg = {0};
-    env.krnl.mm = &mm;
     TEST_ASSERT_EQ(-1, (int)vm_map_kernel(&proc, 0, 4096, 123, 1, &krg));
 
     mm_proc_cleanup_tables(&mm);
@@ -566,7 +590,6 @@ static void run_mm20(void)
         TEST_ASSERT_EQ(0, args[i].status);
     }
 
-    /* Kiểm tra không có 2 process nào bị cấp trùng FPN vật lý */
     int total_frames = n_procs * pages_per_proc;
     int *fpn_owners = (int *)calloc((size_t)total_frames, sizeof(int));
     TEST_ASSERT(fpn_owners != NULL);
@@ -595,9 +618,7 @@ static void run_mm20(void)
     mm_env_destroy(&env);
 }
 
-/* Helper: verify two virtual pages keep independent leaf PTEs. */
-static void check_independent_pages(addr_t pgn_a, addr_t pgn_b,
-                                    uint32_t pid)
+static void check_independent_pages(addr_t pgn_a, addr_t pgn_b, uint32_t pid)
 {
     struct mm_test_env env;
     struct pcb_t proc;
@@ -617,7 +638,6 @@ static void check_independent_pages(addr_t pgn_a, addr_t pgn_b,
     TEST_ASSERT_EQ(2, PAGING_FPN(pte_a));
     TEST_ASSERT_EQ(6, PAGING_FPN(pte_b));
 
-    /* Re-read A after writing B: B must not overwrite A. */
     pte_a = pte_get_entry(&mm, pgn_a, &proc);
     TEST_ASSERT_EQ(2, PAGING_FPN(pte_a));
 
@@ -625,31 +645,13 @@ static void check_independent_pages(addr_t pgn_a, addr_t pgn_b,
     mm_env_destroy(&env);
 }
 
-/* MM21: Same PT index, different PMD index. */
-static void run_mm21(void)
-{
-    check_independent_pages(5, (1ULL << 9) | 5, 21);
-}
+/* MM21 - MM24: Cach ly cac cap PMD / PUD / P4D / PGD */
+static void run_mm21(void) { check_independent_pages(5, (1ULL << 9)  | 5, 21); }
+static void run_mm22(void) { check_independent_pages(5, (1ULL << 18) | 5, 22); }
+static void run_mm23(void) { check_independent_pages(5, (1ULL << 27) | 5, 23); }
+static void run_mm24(void) { check_independent_pages(5, (1ULL << 36) | 5, 24); }
 
-/* MM22: Same lower indices, different PUD index. */
-static void run_mm22(void)
-{
-    check_independent_pages(5, (1ULL << 18) | 5, 22);
-}
-
-/* MM23: Same lower indices, different P4D index. */
-static void run_mm23(void)
-{
-    check_independent_pages(5, (1ULL << 27) | 5, 23);
-}
-
-/* MM24: Same lower indices, different PGD index. */
-static void run_mm24(void)
-{
-    check_independent_pages(5, (1ULL << 36) | 5, 24);
-}
-
-/* MM25: Several branches at all five levels coexist in one address space. */
+/* MM25: Nhiều nhánh ở cả 5 cấp cùng tồn tại */
 static void run_mm25(void)
 {
     struct mm_test_env env;
@@ -657,10 +659,10 @@ static void run_mm25(void)
     struct mm_struct mm;
     const addr_t pages[] = {
         5,
-        (1ULL << 9)  | 5,  /* PMD differs */
-        (1ULL << 18) | 5,  /* PUD differs */
-        (1ULL << 27) | 5,  /* P4D differs */
-        (1ULL << 36) | 5   /* PGD differs */
+        (1ULL << 9)  | 5,
+        (1ULL << 18) | 5,
+        (1ULL << 27) | 5,
+        (1ULL << 36) | 5
     };
     const addr_t fpns[] = {2, 3, 4, 5, 6};
 
@@ -680,7 +682,7 @@ static void run_mm25(void)
     mm_env_destroy(&env);
 }
 
-/* MM26: Hierarchical page-table cleanup releases the whole tree. */
+/* MM26: Giải phóng cây bảng trang 5 cấp */
 static void run_mm26(void)
 {
     struct mm_test_env env;
@@ -698,15 +700,13 @@ static void run_mm26(void)
     TEST_ASSERT_EQ(0, pte_get_entry(&mm, 5, &proc));
     TEST_ASSERT_EQ(0, pte_get_entry(&mm, (1ULL << 36) | 5, &proc));
 
-    /* Cleanup should be safe to call again. */
     TEST_ASSERT_EQ(0, mm_free_page_tables(&mm));
 
     mm_proc_cleanup_tables(&mm);
     mm_env_destroy(&env);
 }
 
-
-/* MM27: Reject virtual addresses/page numbers outside the 57-bit address space. */
+/* MM27: Từ chối địa chỉ vượt không gian 57-bit */
 static void run_mm27(void)
 {
     addr_t pgd = 0, p4d = 0, pud = 0, pmd = 0, pt = 0;
@@ -727,6 +727,220 @@ static void run_mm27(void)
     mm_env_destroy(&env);
 }
 
+/* MM28 (MỚI): Kiểm tra PENDING_SWP_FLAG trong 1 lần vm_map_ram vượt số frame RAM */
+static void run_mm28(void)
+{
+    struct mm_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+
+    /* 2 frame RAM, 4 frame SWAP -> xin 4 trang trong 1 lan goi: 2 trang dau bi day sang SWAP, 2 trang sau nam tren RAM */
+    mm_env_init(&env, 2, 4);
+    mm_proc_init(&proc, &mm, &env.krnl, 28);
+
+    struct vm_rg_struct ret_rg = {0};
+    TEST_ASSERT_EQ(0, (int)vm_map_ram(&proc, 0, 4ULL * PAGING64_PAGESZ, 0, 4, &ret_rg));
+
+    int present_cnt = 0, swapped_cnt = 0;
+    for (addr_t pgn = 0; pgn < 4; ++pgn) {
+        addr_t pte = pte_get_entry(&mm, pgn, &proc);
+        if (PAGING_PAGE_PRESENT(pte)) present_cnt++;
+        else if (pte & PAGING_PTE_SWAPPED_MASK) swapped_cnt++;
+    }
+    TEST_ASSERT_EQ(2, present_cnt);
+    TEST_ASSERT_EQ(2, swapped_cnt);
+
+    free_pcb_memph(&proc);
+    verify_memphy_invariants(&env.mram, 2);
+    verify_memphy_invariants(&env.mswp, 4);
+    mm_proc_cleanup_tables(&mm);
+    mm_env_destroy(&env);
+}
+
+/* MM29 (MỚI): Global Page Replacement - Process B thu hồi frame RAM của Process A khi hết RAM */
+static void run_mm29(void)
+{
+    struct mm_test_env env;
+    struct pcb_t proc_a, proc_b;
+    struct mm_struct mm_a, mm_b;
+
+    /* Tong RAM chi co 2 frame, SWAP co 4 frame */
+    mm_env_init(&env, 2, 4);
+    mm_proc_init(&proc_a, &mm_a, &env.krnl, 291);
+    mm_proc_init(&proc_b, &mm_b, &env.krnl, 292);
+
+    /* Process A chiem tron 2 frame RAM */
+    struct vm_rg_struct rg_a = {0};
+    TEST_ASSERT_EQ(0, (int)vm_map_ram(&proc_a, 0, 2ULL * PAGING64_PAGESZ, 0, 2, &rg_a));
+    TEST_ASSERT(env.mram.free_fp_list == NULL);
+
+    /* Process B xin 1 trang -> buoc phai chon victim tu Process A day ra SWAP */
+    struct vm_rg_struct rg_b = {0};
+    TEST_ASSERT_EQ(0, (int)vm_map_ram(&proc_b, 0, PAGING64_PAGESZ, 0, 1, &rg_b));
+
+    addr_t pte_b0 = pte_get_entry(&mm_b, 0, &proc_b);
+    TEST_ASSERT(PAGING_PAGE_PRESENT(pte_b0) != 0);
+
+    /* Kiem tra Process A co 1 trang bi chuyen sang SWAPPED */
+    int a_swapped = 0;
+    for (addr_t pgn = 0; pgn < 2; ++pgn) {
+        addr_t pte = pte_get_entry(&mm_a, pgn, &proc_a);
+        if (!PAGING_PAGE_PRESENT(pte) && (pte & PAGING_PTE_SWAPPED_MASK))
+            a_swapped++;
+    }
+    TEST_ASSERT_EQ(1, a_swapped);
+
+    free_pcb_memph(&proc_a);
+    free_pcb_memph(&proc_b);
+    verify_memphy_invariants(&env.mram, 2);
+    verify_memphy_invariants(&env.mswp, 4);
+    mm_proc_cleanup_tables(&mm_a);
+    mm_proc_cleanup_tables(&mm_b);
+    mm_env_destroy(&env);
+}
+
+/* MM30 (MỚI): Kiểm tra các hàm VMA trong mm-vm.c (get_vma_by_num, overlap, get_vm_area_node_at_brk) */
+static void run_mm30(void)
+{
+    struct mm_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+
+    mm_env_init(&env, 8, 4);
+    mm_proc_init(&proc, &mm, &env.krnl, 30);
+
+    /* get_vma_by_num phai tra NULL cho ID khong ton tai, khong lay nham VMA ke tiep */
+    TEST_ASSERT(get_vma_by_num(&mm, -1) == NULL);
+    TEST_ASSERT(get_vma_by_num(&mm, 99) == NULL);
+    TEST_ASSERT(get_vma_by_num(&mm, VMA_MEDIUM) != NULL);
+
+    /* validate_overlap_vm_area: nam gon trong VMA_MEDIUM hop le, tran sang VMA_LARGE bi tu choi */
+    addr_t med_start = 1ULL << 55;
+    addr_t lrg_start = 1ULL << 56;
+    TEST_ASSERT_EQ(0, validate_overlap_vm_area(&proc, VMA_MEDIUM, med_start, med_start + 8192));
+    TEST_ASSERT_EQ(-1, validate_overlap_vm_area(&proc, VMA_MEDIUM, med_start, lrg_start + 4096));
+
+    /* get_vm_area_node_at_brk: tu choi kich thuoc khong boi so page, chap nhan boi so page */
+    TEST_ASSERT(get_vm_area_node_at_brk(&proc, VMA_SMALL, 100) == NULL);
+    struct vm_rg_struct *brk_rg = get_vm_area_node_at_brk(&proc, VMA_SMALL, 2 * PAGING64_PAGESZ);
+    TEST_ASSERT(brk_rg != NULL);
+    if (brk_rg != NULL) {
+        TEST_ASSERT_EQ(0, brk_rg->rg_start);
+        TEST_ASSERT_EQ(2 * PAGING64_PAGESZ, brk_rg->rg_end);
+        TEST_ASSERT_EQ(VMA_SMALL, brk_rg->vmaid);
+        free(brk_rg);
+    }
+
+    mm_proc_cleanup_tables(&mm);
+    mm_env_destroy(&env);
+}
+
+/* MM31 (MỚI): inc_vma_limit mở rộng sbrk nhưng giữ cố định biên vm_end */
+static void run_mm31(void)
+{
+    struct mm_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+
+    mm_env_init(&env, 8, 4);
+    mm_proc_init(&proc, &mm, &env.krnl, 31);
+
+    struct vm_area_struct *vma_med = get_vma_by_num(&mm, VMA_MEDIUM);
+    TEST_ASSERT(vma_med != NULL);
+    addr_t orig_end = vma_med->vm_end;
+    addr_t orig_sbrk = vma_med->sbrk;
+
+    /* Xin 5000 byte -> lam tron len 2 trang (8192 byte) */
+    TEST_ASSERT_EQ(0, inc_vma_limit(&proc, VMA_MEDIUM, 5000));
+    TEST_ASSERT_EQ(orig_sbrk + 2 * PAGING64_PAGESZ, vma_med->sbrk);
+    TEST_ASSERT_EQ(orig_end, vma_med->vm_end);
+
+    /* Danh sach vm_freerg_list phai nhan duoc vung [orig_sbrk, orig_sbrk + 8192) */
+    TEST_ASSERT(vma_med->vm_freerg_list != NULL);
+    TEST_ASSERT_EQ(orig_sbrk, vma_med->vm_freerg_list->rg_start);
+    TEST_ASSERT_EQ(orig_sbrk + 2 * PAGING64_PAGESZ, vma_med->vm_freerg_list->rg_end);
+
+    /* Co tinh mo rong vuot qua vm_end cua VMA_MEDIUM -> phai bi tu choi */
+    TEST_ASSERT_EQ(-1, inc_vma_limit(&proc, VMA_MEDIUM, (1ULL << 55)));
+
+    free_pcb_memph(&proc);
+    mm_proc_cleanup_tables(&mm);
+    mm_env_destroy(&env);
+}
+
+/* MM32 (MỚI): vm_map_kernel & Rollback khi thiếu RAM (không dùng SWAP / FIFO) */
+static void run_mm32(void)
+{
+    struct mm_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+
+    /* RAM chi co 3 frame */
+    mm_env_init(&env, 3, 4);
+    mm_proc_init(&proc, &mm, &env.krnl, 32);
+
+    struct vm_rg_struct krg = {0};
+    /* Xin 4 trang cho Kernel khi RAM chi co 3 frame -> phai that bai va rollback du 3 frame RAM */
+    TEST_ASSERT_EQ(-1, (int)vm_map_kernel(&proc, 0, 0, 0, 4, &krg));
+    verify_memphy_invariants(&env.mram, 3);
+    TEST_ASSERT(env.mram.used_fp_list == NULL);
+
+    /* Xin 2 trang cho Kernel -> thanh cong, khong dua vao fifo_pgn */
+    TEST_ASSERT_EQ(0, (int)vm_map_kernel(&proc, 0, 0, 0, 2, &krg));
+    TEST_ASSERT_EQ(0, krg.rg_start);
+    TEST_ASSERT_EQ(2 * PAGING64_PAGESZ, krg.rg_end);
+    TEST_ASSERT(PAGING_PAGE_PRESENT(pte_get_entry(&env.kmm, 0, &proc)) != 0);
+    TEST_ASSERT(PAGING_PAGE_PRESENT(pte_get_entry(&env.kmm, 1, &proc)) != 0);
+    TEST_ASSERT(env.kmm.fifo_pgn == NULL);
+
+    mm_proc_cleanup_tables(&mm);
+    mm_env_destroy(&env);
+}
+
+/* MM33 (MỚI): vmap_pgd_memset gán mẫu 0xdeadbeef và kiểm tra RAM < 1 trang (test 1K) */
+static void run_mm33(void)
+{
+    struct mm_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+
+    mm_env_init(&env, 4, 4);
+    mm_proc_init(&proc, &mm, &env.krnl, 33);
+
+    addr_t base = 4ULL * PAGING64_PAGESZ;
+    TEST_ASSERT_EQ(0, vmap_pgd_memset(&proc, base, 3));
+    TEST_ASSERT_EQ(0xdeadbeefULL, pte_get_entry(&mm, 4, &proc));
+    TEST_ASSERT_EQ(0xdeadbeefULL, pte_get_entry(&mm, 5, &proc));
+    TEST_ASSERT_EQ(0xdeadbeefULL, pte_get_entry(&mm, 6, &proc));
+
+    mm_proc_cleanup_tables(&mm);
+    mm_env_destroy(&env);
+
+    /* Mo phong cau hinh RAM < 4KB (test 1K: 1024 byte RAM, 4 frame SWAP) */
+    struct mm_test_env env_1k;
+    struct pcb_t proc_1k;
+    struct mm_struct mm_1k;
+    memset(&env_1k, 0, sizeof(env_1k));
+    env_1k.mram_ready = (test_memphy_init(&env_1k.mram, 1024, 1) == 0);
+    env_1k.mswp_ready = (test_memphy_init(&env_1k.mswp, 4 * PAGING64_PAGESZ, 1) == 0);
+    env_1k.mswp_arr[0] = &env_1k.mswp;
+    env_1k.krnl.mram = &env_1k.mram;
+    env_1k.krnl.mswp = env_1k.mswp_arr;
+    env_1k.krnl.active_mswp = &env_1k.mswp;
+    env_1k.krnl.running_list = &env_1k.running_list;
+
+    mm_proc_init(&proc_1k, &mm_1k, &env_1k.krnl, 331);
+    struct vm_rg_struct rg_1k = {0};
+    TEST_ASSERT_EQ(0, (int)vm_map_ram(&proc_1k, 0, 2 * PAGING64_PAGESZ, 0, 2, &rg_1k));
+    TEST_ASSERT((pte_get_entry(&mm_1k, 0, &proc_1k) & PAGING_PTE_SWAPPED_MASK) != 0);
+    TEST_ASSERT((pte_get_entry(&mm_1k, 1, &proc_1k) & PAGING_PTE_SWAPPED_MASK) != 0);
+
+    free_pcb_memph(&proc_1k);
+    mm_proc_cleanup_tables(&mm_1k);
+    test_memphy_destroy(&env_1k.mram, env_1k.mram_ready);
+    test_memphy_destroy(&env_1k.mswp, env_1k.mswp_ready);
+}
+
 #define RUN_TEST(id, description, function) do { \
     test_begin((id), (description)); \
     function(); \
@@ -735,7 +949,7 @@ static void run_mm27(void)
 
 int main(void)
 {
-    RUN_TEST("MM01", "Initialize MM structure", run_mm01);
+    RUN_TEST("MM01", "Initialize MM structure (3 User VMAs + 1 Kernel VMA)", run_mm01);
     RUN_TEST("MM02", "Initialize 5-level page tables", run_mm02);
     RUN_TEST("MM03", "Decode 64-bit virtual address into 5 levels + offset", run_mm03);
     RUN_TEST("MM04", "Decode page number into 5 directory indices", run_mm04);
@@ -750,7 +964,7 @@ int main(void)
     RUN_TEST("MM13", "Read SWAP type and offset from swapped PTE", run_mm13);
     RUN_TEST("MM14", "Map multiple virtual pages via vmap_page_range", run_mm14);
     RUN_TEST("MM15", "Map contiguous virtual range without duplicate frames", run_mm15);
-    RUN_TEST("MM16", "Reject mapping when RAM and SWAP are exhausted", run_mm16);
+    RUN_TEST("MM16", "Reject mapping when RAM and SWAP are exhausted and rollback", run_mm16);
     RUN_TEST("MM17", "Isolate identical virtual addresses across processes", run_mm17);
     RUN_TEST("MM18", "Release all MM resources (RAM, SWAP, PTE, FIFO)", run_mm18);
     RUN_TEST("MM19", "Reject invalid pointers and unaligned kernel mapping", run_mm19);
@@ -762,6 +976,12 @@ int main(void)
     RUN_TEST("MM25", "Multiple branches across all five levels", run_mm25);
     RUN_TEST("MM26", "Free the hierarchical page-table tree", run_mm26);
     RUN_TEST("MM27", "Reject virtual addresses outside the 57-bit address space", run_mm27);
+    RUN_TEST("MM28", "Single vm_map_ram exceeding free RAM spills excess pages to SWAP", run_mm28);
+    RUN_TEST("MM29", "Global page replacement evicts victim from another running process", run_mm29);
+    RUN_TEST("MM30", "Verify mm-vm VMA lookup, overlap checks, and brk node helpers", run_mm30);
+    RUN_TEST("MM31", "Extend sbrk via inc_vma_limit while preserving reserved vm_end", run_mm31);
+    RUN_TEST("MM32", "Map kernel pages via vm_map_kernel and rollback on insufficient RAM", run_mm32);
+    RUN_TEST("MM33", "Verify vmap_pgd_memset pattern and sub-page RAM (<4KB) fallback", run_mm33);
 
     test_summary();
     return 0;
