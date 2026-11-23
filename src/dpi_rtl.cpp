@@ -86,6 +86,7 @@ extern "C" int rtl_dma_init_simulation(void) {
     }
     
     printf("Initialized dma_rtl simulation\n");
+    printf("[DMA INIT] RTL simulation initialized\n");
     return 0;
 }
 
@@ -109,6 +110,7 @@ extern "C" void rtl_dma_cleanup_simulation(void) {
     is_tracing = false;
     sim_time = 0;
     printf("Clean up dma_rtl simulation\n");
+    printf("[DMA CLEANUP] RTL simulation cleaned up\n");
 }
 
 /* ===================================================================
@@ -118,6 +120,9 @@ extern "C" void rtl_dma_cleanup_simulation(void) {
  * =================================================================== */
 static dma_job_state_t g_state  = DMA_JOB_IDLE;
 static uint64_t        g_cycles = 0;   /* so chu ky job hien tai da chay */
+
+static uint64_t g_job_length = 0;
+static unsigned int g_next_progress = 25;
 
 /* Dap tron mot chu ky clock: xuong 0 roi len 1.
  * Mach chi nhuc nhich khi co eval(), khong tu chay nhu FPGA that. */
@@ -156,7 +161,11 @@ extern "C" int dpi_rtl_dma_start(uint64_t source, uint64_t destination,
         (source & 3U) != 0 || (destination & 3U) != 0 ||
         !memory_bank_check_range(source, (size_t)length) ||
         !memory_bank_check_range(destination, (size_t)length)) {
-        fprintf(stderr, "DMA descriptor has invalid alignment, length, or RAM range\n");
+            fprintf(stderr,
+            "[DMA ERROR] Invalid request: SRC=0x%llx DST=0x%llx LEN=%llu\n",
+            (unsigned long long)source,
+            (unsigned long long)destination,
+            (unsigned long long)length);
         return -1;
     }
 
@@ -181,6 +190,12 @@ extern "C" int dpi_rtl_dma_start(uint64_t source, uint64_t destination,
 
     g_state  = DMA_JOB_RUNNING;
     g_cycles = 0;
+    g_job_length = length;
+    g_next_progress = 25;
+    printf("[DMA START] SRC=0x%llx DST=0x%llx LEN=%llu bytes\n",
+       (unsigned long long)source,
+       (unsigned long long)destination,
+       (unsigned long long)length);
 
     /* Mot chu ky de mach chuyen IDLE -> LOAD, roi tra ve ngay.
      * Tu day CPU ranh di lam viec khac. */
@@ -200,21 +215,57 @@ extern "C" int dpi_rtl_dma_tick(int nclk) {
 
     for (int i = 0; i < nclk; i++) {
         if (top->ch_done) break;
+
         if (g_cycles >= DMA_MAX_CYCLES) {
-            printf("DMA timeout sau %llu chu ky\n",
-                   (unsigned long long) g_cycles);
+            fprintf(stderr,
+                    "[DMA ERROR] Timeout after %llu cycles\n",
+                    (unsigned long long)g_cycles);
+
             g_state = DMA_JOB_ERROR;
             return 1;
         }
+
         tick_one_cycle();
+
+        uint64_t transferred = top->ch_bytes_transferred;
+
+        if (g_job_length > 0) {
+            unsigned int percent =
+                (unsigned int)(transferred * 100 / g_job_length);
+
+            while (g_next_progress <= 75 &&
+                percent >= g_next_progress) {
+
+                printf("[DMA PROGRESS] %u%% | %llu/%llu bytes | cycle=%llu\n",
+                    g_next_progress,
+                    (unsigned long long)transferred,
+                    (unsigned long long)g_job_length,
+                    (unsigned long long)g_cycles);
+
+                g_next_progress += 25;
+            }
+        }
     }
 
     if (top->ch_done) {
-        /* Dap them 2 nua chu ky voi ch_enable VAN giu, de mach kip goi
-         * dma_done_callback() tai suon len cua ch_done. */
         top->clk ^= 1; top->eval();
         top->clk ^= 1; top->eval();
+
         g_state = top->ch_error ? DMA_JOB_ERROR : DMA_JOB_DONE;
+
+        if (g_state == DMA_JOB_DONE) {
+            printf("[DMA DONE] Transferred=%u/%llu bytes | cycles=%llu\n",
+                (unsigned int)top->ch_bytes_transferred,
+                (unsigned long long)g_job_length,
+                (unsigned long long)g_cycles);
+        }
+        else {
+            fprintf(stderr,
+                    "[DMA ERROR] RTL reported error | transferred=%u bytes | cycles=%llu\n",
+                    (unsigned int)top->ch_bytes_transferred,
+                    (unsigned long long)g_cycles);
+        }
+
         return 1;
     }
     return 0;   /* con chay, slot sau tick tiep */
