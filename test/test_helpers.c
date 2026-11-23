@@ -245,5 +245,5 @@ int do_dma_start(struct pcb_t *caller, uint64_t source,
     (void)source;
     (void)destination;
     (void)length;
-    return -1;
+    return 0;
 }

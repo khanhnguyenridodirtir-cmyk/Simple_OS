@@ -27,11 +27,9 @@ static pthread_mutex_t mmvm_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t kmm_lock = PTHREAD_MUTEX_INITIALIZER;
 // prototype tu che de giai phong bo nho
 int free_pcb_memph(struct pcb_t *caller);
-struct vm_rg_struct *get_symrg_byaddr( struct mm_struct *mm,addr_t addr,int *rgid); 
-static int select_vmaid(addr_t size);
-
 
 #define DMADEBUG
+
 /*enlist_vm_freerg_list - add new rg to freerg_list
  *@mm: memory region
  *@rg_elmt: new region
@@ -63,11 +61,13 @@ int enlist_vm_freerg_list(struct mm_struct *mm, struct vm_rg_struct *rg_elmt, in
 
   return 0;
 }
+/* Cac ham tim kiem region va area */
 /*get_symrg_byid - get mem region by region ID
  *@mm: memory region
  *@rgid: region ID act as symbol index of variable
  *
  */
+
 struct vm_rg_struct *get_symrg_byid(struct mm_struct *mm, int rgid)
 {
   // B1: Kiem tra page table va chi so symbol
@@ -78,6 +78,21 @@ struct vm_rg_struct *get_symrg_byid(struct mm_struct *mm, int rgid)
   return &mm->symrgtbl[rgid];
 }
 
+int find_free_symrg(struct mm_struct *mm)
+{
+    if (mm == NULL)
+        return -1;
+
+    for (int i = 0; i < PAGING_MAX_SYMTBL_SZ; i++) {
+        if (mm->symrgtbl[i].vmaid < 0 &&
+            mm->symrgtbl[i].rg_start == 0 &&
+            mm->symrgtbl[i].rg_end == 0) {
+            return i;
+        }
+    }
+
+    return -1;
+}
 /*__alloc - allocate a region memory
  *@caller: caller
  *@vmaid: ID vm area to alloc memory region
@@ -87,15 +102,41 @@ struct vm_rg_struct *get_symrg_byid(struct mm_struct *mm, int rgid)
  *
  */
 
+struct vm_rg_struct *get_symrg_byaddr(
+    struct mm_struct *mm,
+    addr_t addr,
+    int *rgid
+) {
+    if (mm == NULL || rgid == NULL)
+        return NULL;
+    
+    for (int i = 0; i < PAGING_MAX_SYMTBL_SZ; i++) {
+        struct vm_rg_struct *rg = &mm->symrgtbl[i];
+
+        if (rg->vmaid >= 0 &&
+            rg->rg_start == addr &&
+            rg->rg_end > rg->rg_start) {
+            *rgid = i;
+            return rg;
+        }
+      }
+   
+    return NULL;
+}
 int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *alloc_addr)
 {
   /*Allocate at the toproof */
   //B1 : Kiem tra 
-  if(caller==NULL||caller->mm==NULL || alloc_addr==NULL || size==0 || rgid <0 ||rgid >= PAGING_MAX_SYMTBL_SZ) 
+  if(caller==NULL||caller->mm==NULL || alloc_addr==NULL || size==0 ) 
     return -1;
 
   
   pthread_mutex_lock(&mmvm_lock);
+  rgid = find_free_symrg(caller->mm);
+  if(rgid <0 ||rgid >= PAGING_MAX_SYMTBL_SZ){
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
   struct vm_rg_struct rgnode;
   // Lay con tro vung nho vma truoc de chuan bi lay freerg
   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
@@ -105,6 +146,7 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
     pthread_mutex_unlock(&mmvm_lock);
     return -1;
   }
+
   // Kiem tra symbol table slot da duoc su dung chua
   if (caller->mm->symrgtbl[rgid].rg_start != 0 ||
       caller->mm->symrgtbl[rgid].rg_end != 0)
@@ -238,22 +280,26 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
  */
 int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
 {
-  if(reg_index>=MAXREG || proc==NULL) return-1;
+  if (reg_index >= MAXREG || proc == NULL || proc->mm == NULL) return -1;
   addr_t  addr;
   
   int vmaid = select_vmaid(size);
+
   
-  int val = __alloc(proc, vmaid, reg_index, size, &addr);
+
+  int val = __alloc(proc, vmaid, -1, size, &addr);
  
   if (val == -1)
   {
     return -1;
   }
   proc->regs[reg_index] = addr;
+  
 #ifdef IODUMP
-  if(proc->krnl != NULL && proc->krnl->mram != NULL) MEMPHY_dump(proc->krnl->mram);
+  if (proc->krnl != NULL && proc->krnl->mram != NULL)
+    MEMPHY_dump(proc->krnl->mram);
   printf("[ALLOC] PID=%d reg=%d -> rg_start=%lu, rg_end=%lu\n",
-          proc->pid, reg_index, proc->mm->symrgtbl[reg_index].rg_start, proc->mm->symrgtbl[reg_index].rg_end);
+         proc->pid, reg_index, (unsigned long)addr, (unsigned long)(addr + size));
 #ifdef PAGETBL_DUMP
     print_pgtbl(proc, 0, -1); // print max TBL
 #endif
@@ -263,7 +309,7 @@ int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
   return val;
 }
 
-static int select_vmaid(addr_t size)
+int select_vmaid(addr_t size)
 {
     if (size <= SMALL_MAX_SIZE)
         return VMA_SMALL;
@@ -271,29 +317,11 @@ static int select_vmaid(addr_t size)
     if (size <= MEDIUM_MAX_SIZE)
         return VMA_MEDIUM;
 
-    return VMA_LARGE;
+     return VMA_LARGE;
+
 }
 
-struct vm_rg_struct *get_symrg_byaddr(
-    struct mm_struct *mm,
-    addr_t addr,
-    int *rgid
-) {
-    if (mm == NULL || rgid == NULL)
-        return NULL;
 
-    for (int i = 0; i < PAGING_MAX_SYMTBL_SZ; i++) {
-        struct vm_rg_struct *rg = &mm->symrgtbl[i];
-
-        if (rg->rg_start == addr &&
-            rg->rg_end > rg->rg_start) {
-            *rgid = i;
-            return rg;
-        }
-    }
-
-    return NULL;
-}
 /*libfree - PAGING-based free a region memory
  *@proc: Process executing the instruction
  *@size: allocated size
@@ -326,7 +354,7 @@ int libfree(struct pcb_t *proc, uint32_t reg_index)
     if (val < 0)
         return -1;
 
-    proc->regs[reg_index] = 0;
+    proc->regs[reg_index] = (addr_t)-1;
 
     return 0;
 }
@@ -653,13 +681,13 @@ int libread(
     if (vmaid < 0)
         return -1;
 
-  int val = __read(proc, vmaid, source, offset, &data);
+  int val = __read(proc, vmaid, rgid, offset, &data);
   if(val<0){
     return -1;
   }
   // gan gia tri vao data
 
-  proc->regs[*destination] = data;
+  proc->regs[*destination] = (uint8_t)data;
 #ifdef IODUMP
   /* TODO dump IO content (if needed) */
   printf("[VERIFY READ] PID=%d reg=%d offset=%ld -> val=%d\n", proc->pid, source, offset, data);
@@ -970,6 +998,20 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
 }
 
 
+/*========================DMA HELPER=====================
+*/
+static int reg_to_rgid(struct pcb_t *proc, uint32_t reg_idx)
+{
+    if (proc == NULL || proc->mm == NULL || reg_idx >= MAXREG)
+        return -1;
+  
+    addr_t addr = (addr_t)proc->regs[reg_idx];
+    int rgid = -1;
+    if (get_symrg_byaddr(proc->mm, addr, &rgid) == NULL)
+        return -1;
+
+    return rgid;
+}
 
 /* ===================================================================
  * Bang job DMA dang bay (in-flight) cua cac process
@@ -1033,32 +1075,38 @@ static int dma_conflict(uint32_t pid, int rd, int wr)
  */
 int libmem_dma_blocked(struct pcb_t *proc)
 {
+  // B1 : validate du lieu  (note :goc)
   if (proc == NULL || proc->code == NULL)
     return 0;
 
+
   int blocked = 0;
 
-  pthread_mutex_lock(&dma_job_lock);
+   int rd = -1, wr = -1;
+  if(proc->pc < proc->code->size) {
+    struct inst_t *ins = &proc->code->text[proc->pc];
+    switch (ins->opcode) {
+    case READ:           rd = reg_to_rgid(proc, ins->arg_0); break;
+    case WRITE:          wr = reg_to_rgid(proc, ins->arg_1); break;
+    case FREE:           wr = reg_to_rgid(proc, ins->arg_0); break;
+    
+    case ALLOC:          break; 
+#ifdef MM_PAGING
+    case COPY_FROM_USER: rd = (int) ins->arg_0; break; /* Lenh syscall kernel vẫn truyền thẳng rgid */
+    case COPY_TO_USER:   wr = (int) ins->arg_1; break;
+#endif
+    default: break;
+    }
+   
+  }
+   pthread_mutex_lock(&dma_job_lock);
   if (proc->pc >= proc->code->size) {
     /* Het lenh. Khong bao gio run() qua cuoi code: tra 1 de CPU khong
      * chay. Neu con DMA thi process phai cho; neu het DMA thi vong sau
      * cpu_routine() se cho no ket thuc binh thuong. */
     blocked = 1;
-  } else {
-    struct inst_t *ins = &proc->code->text[proc->pc];
-    int rd = -1, wr = -1;
-    switch (ins->opcode) {
-    case READ:           rd = (int) ins->arg_0; break;
-    case WRITE:          wr = (int) ins->arg_1; break;
-    case FREE:           wr = (int) ins->arg_0; break;
-    case ALLOC:          wr = (int) ins->arg_1; break;
-#ifdef MM_PAGING
-    case COPY_FROM_USER: rd = (int) ins->arg_0; break;
-    case COPY_TO_USER:   wr = (int) ins->arg_1; break;
-#endif
-    default: break;                  /* CALC, SYSCALL, DMA_MEMCPY: chay luon */
-    }
-    blocked = dma_conflict(proc->pid, rd, wr);
+  } else{
+     blocked = dma_conflict(proc->pid, rd, wr);
   }
   pthread_mutex_unlock(&dma_job_lock);
   return blocked;
@@ -1108,104 +1156,127 @@ static int dma_xlat(struct pcb_t *caller, addr_t vaddr, uint64_t *phyaddr)
   return 0;
 }
 /*libmem_dma_memcpy - DMA memcpy
- *@caller: caller
- *@src: source region
- *@dst: destination region
- *@offset: memory offset
+ *@caller: caller - process goi
+ *@src: source region - Vung nho nguon (se dc copy)
+ *@dst: destination region - Vung nho dich cua du lieu copy qua
+ *@offset: memory offset  
  *@size: copied data size
  */
+// Day la interface cho dma va don gian la nhet con viec vao hang doi de thuc hien
 int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t offset, uint32_t size)
 {
   uint64_t sphy = 0, dphy = 0;
 
-  if (caller == NULL || caller->mm == NULL || caller->krnl == NULL)
+  if (caller == NULL || caller->mm == NULL || caller->krnl == NULL || size == 0)
     return -1;
 
-  /* --- 1. region id -> dia chi ao ---------------------------------
-   * src/dst trong "dma_memcpy 1 2 0 4" KHONG phai dia chi, chung la
-   * so hieu vung nho trong bang ky hieu cua process. */
-  struct vm_rg_struct *srcrg = get_symrg_byid(caller->mm, src);
-  struct vm_rg_struct *dstrg = get_symrg_byid(caller->mm, dst);
-  if (srcrg == NULL || dstrg == NULL)
+  /* --- 1. Thanh ghi (reg_index) -> dia chi ao -> region & rgid -------
+   * Theo dac ta lenh "dma_memcpy 1 2 0 4": src=1, dst=2 la chi so thanh ghi
+   * giu dia chi dau cua vung nho. Ta tra nguoc qua symrgtbl de lay dung
+   * struct region va rgid thuc te (phuc vu kiem tra bien va dma_conflict). */
+  if (src >= MAXREG || dst >= MAXREG)
     return -1;
 
-  /* --- 1b. region phai DA CAP PHAT va du cho [offset, offset+size) ---
-   * Phan tu symrgtbl chua cap phat co rg_start == rg_end == 0. Neu bo
-   * qua buoc nay, dia chi ao 0 van dich ra mot frame that (frame cua
-   * region khac!) va DMA ghi de du lieu cua process. Da gap dung truong
-   * hop nay khi chay m2s: "kmalloc 200 2" chua duoc cai nen rg2 rong,
-   * DMA ghi len chinh frame cua rg1. */
-  if (srcrg->rg_end <= srcrg->rg_start ||
-      (addr_t) offset + size > srcrg->rg_end - srcrg->rg_start) {
+  addr_t src_addr = (addr_t)caller->regs[src];
+  addr_t dst_addr = (addr_t)caller->regs[dst];
+  int sourcergid = -1, destinationrgid = -1;
+
+  struct vm_rg_struct *sourceRegion = get_symrg_byaddr(caller->mm, src_addr, &sourcergid);
+  struct vm_rg_struct *destinyRegion = get_symrg_byaddr(caller->mm, dst_addr, &destinationrgid);
+  if (sourceRegion == NULL || destinyRegion == NULL || sourcergid < 0 || destinationrgid < 0)
+    return -1;
+
+  /* --- 1b. Kiem tra region da cap phat va [offset, offset+size) hop le --- */
+  if (sourceRegion->rg_end <= sourceRegion->rg_start ||
+      (addr_t)offset + size > sourceRegion->rg_end - sourceRegion->rg_start) {
 #ifdef DMADEBUG
-    printf("libmem_dma_memcpy: PID %u rg%u chua cap phat hoac copy vuot bien "
-           "[%lu,%lu)\n", caller->pid, src,
-           (unsigned long) srcrg->rg_start, (unsigned long) srcrg->rg_end);
+    printf("libmem_dma_memcpy: PID %u reg%u (rg%d) chua cap phat hoac copy vuot bien [%lu,%lu)\n",
+           caller->pid, src, sourcergid,
+           (unsigned long)sourceRegion->rg_start, (unsigned long)sourceRegion->rg_end);
 #endif
-           return -1;
-  }
-  if (dstrg->rg_end <= dstrg->rg_start ||
-      (addr_t) offset + size > dstrg->rg_end - dstrg->rg_start) {
-#ifdef DMADEBUG
-    printf("libmem_dma_memcpy: PID %u rg%u chua cap phat hoac copy vuot bien "
-           "[%lu,%lu)\n", caller->pid, dst,
-           (unsigned long) dstrg->rg_start, (unsigned long) dstrg->rg_end);
-#endif
-           return -1;
+    return -1;
   }
 
-  /* --- 2. dia chi ao -> dia chi vat ly ----------------------------
-   * Buoc nay phu thuoc pg_getpage()/pte_get_entry() cua TV2.
-   * Khi bang trang chua duoc dien thi no bao loi, ta dung lai o day
-   * thay vi dua dia chi rac cho phan cung. */
-  if (dma_xlat(caller, srcrg->rg_start + offset, &sphy) != 0 ||
-      dma_xlat(caller, dstrg->rg_start + offset, &dphy) != 0) {
+  if (destinyRegion->rg_end <= destinyRegion->rg_start ||
+      (addr_t)offset + size > destinyRegion->rg_end - destinyRegion->rg_start) {
 #ifdef DMADEBUG
-        printf("libmem_dma_memcpy: chua dich duoc dia chi \n");
+    printf("libmem_dma_memcpy: PID %u reg%u (rg%d) chua cap phat hoac copy vuot bien [%lu,%lu)\n",
+           caller->pid, dst, destinationrgid,
+           (unsigned long)destinyRegion->rg_start, (unsigned long)destinyRegion->rg_end);
 #endif
-        return -1;
+    return -1;
   }
 
-  /* --- 3. lam tron kich thuoc len boi so 4 ------------------------
-   * Mach chuyen theo nhip 4 byte va nhip cuoi van ghi du 4 byte. */
-  uint32_t len = DMA_LEN_ROUNDUP(size);
+  /* --- 2, 3, 4. Cat nho theo ranh gioi trang 4KB, dich dia chi & nap DMA ---
+   * Cac trang ao lien ke co the nam o cac frame vat ly khong lien ke trong RAM.
+   * Vi vay phai chia nho khoi copy tai moi ranh gioi PAGING64_PAGESZ (4096B),
+   * dich dia chi vat ly cho tung doan roi nap bat dong bo vao hang doi DMA. */
+  addr_t cur_src = sourceRegion->rg_start + offset;
+  addr_t cur_dst = destinyRegion->rg_start + offset;
+  uint32_t remaining = size;
 
-  /* --- 4. khoi dong DMA roi TRA VE NGAY ---------------------------
-   * Day la diem mau chot cua yeu cau "asynchronous": ham nay chay
-   * tren thread CPU, no KHONG duoc cho DMA xong. co_processor()
-   * se cap nhip clock va thu ket qua o cac time slot sau. */
-  /* Ghi job vao bang va nap lenh trong CUNG mot khoa, de thu tu trong
-   * bang dung bang thu tu mach chay (FIFO). Khoa chi giu trong luc nap
-   * lenh, KHONG giu cho toi khi DMA xong. */
-  pthread_mutex_lock(&dma_job_lock);
-  if (dma_job_count >= DMA_JOB_MAX) {
+  while (remaining > 0) {
+    uint32_t src_page_rem = (uint32_t)(PAGING64_PAGESZ - (cur_src % PAGING64_PAGESZ));
+    uint32_t dst_page_rem = (uint32_t)(PAGING64_PAGESZ - (cur_dst % PAGING64_PAGESZ));
+
+    uint32_t chunk = remaining;
+    if (src_page_rem < chunk) chunk = src_page_rem;
+    if (dst_page_rem < chunk) chunk = dst_page_rem;
+
+    /* Dich dia chi ao -> vat ly cho trang hien tai */
+    if (dma_xlat(caller, cur_src, &sphy) != 0 ||
+        dma_xlat(caller, cur_dst, &dphy) != 0) {
+#ifdef DMADEBUG
+      printf("libmem_dma_memcpy: chua dich duoc dia chi tai vaddr src=%lu dst=%lu\n",
+             (unsigned long)cur_src, (unsigned long)cur_dst);
+#endif
+      return -1;
+    }
+
+    /* Lam tron len boi so 4 byte theo DATA_WIDTH = 32-bit cua mach DMA */
+    uint32_t len = DMA_LEN_ROUNDUP(chunk);
+
+    /* Nap lenh xuong phan cung DMA va ghi nhan dung rgid vao bang theo doi FIFO */
+    pthread_mutex_lock(&dma_job_lock);
+    if (dma_job_count >= DMA_JOB_MAX) {
+      pthread_mutex_unlock(&dma_job_lock);
+      return -1;
+    }
+    int tail = (dma_job_head + dma_job_count) % DMA_JOB_MAX;
+    int rc = do_dma_start(caller, sphy, dphy, (uint64_t)len);
+    if (rc >= 0) {
+      dma_jobs[tail].pid = caller->pid;
+      dma_jobs[tail].src_rg = (uint32_t)sourcergid;
+      dma_jobs[tail].dst_rg = (uint32_t)destinationrgid;
+      dma_jobs[tail].len = len;
+      dma_job_count++;
+#ifdef DMADEBUG
+      printf("[Libmem_dma_memcpy] Return code: %d, Dua cong viec vao hang doi, RegionId Source: %d, RegionId Destination: %d\n",
+             rc, sourcergid, destinationrgid);
+#endif
+    }
     pthread_mutex_unlock(&dma_job_lock);
-    return -1;
-  }
-  int tail = (dma_job_head + dma_job_count) % DMA_JOB_MAX;
-  int rc = do_dma_start(caller, sphy, dphy, (uint64_t) len);
-  if (rc >= 0) {
-    dma_jobs[tail].pid = caller->pid;
-    dma_jobs[tail].src_rg = src;
-    dma_jobs[tail].dst_rg = dst;
-    dma_jobs[tail].len = len;
-    dma_job_count++;
-  }
-  pthread_mutex_unlock(&dma_job_lock);
-  if (rc < 0) {
+
+    if (rc < 0) {
 #ifdef DMADEBUG
-    printf("libmem_dma_memcpy: offset ngoai mien hoac hang doi DMA day\n");
+      printf("libmem_dma_memcpy: offset ngoai mien hoac hang doi DMA day\n");
 #endif
-    return -1;
-  }
+      return -1;
+    }
+
 #ifdef DMADEBUG
-  printf("\tDMA: PID %u %s rg%u -> rg%u, %u byte (lam tron %u), CPU chay tiep\n",
-         caller->pid, rc == 0 ? "nap lenh" : "kenh ban, XEP HANG",
-         src, dst, size, len);
+    printf("\tDMA: PID %u %s reg%u(rg%d) -> reg%u(rg%d), %u byte (lam tron %u), CPU chay tiep\n",
+           caller->pid, rc == 0 ? "nap lenh" : "kenh ban, XEP HANG",
+           src, sourcergid, dst, destinationrgid, chunk, len);
 #endif
+
+    cur_src += chunk;
+    cur_dst += chunk;
+    remaining -= chunk;
+  }
+
   return 0;
 }
-
 
 int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t destination, uint32_t offset, uint32_t size)
 {
@@ -1613,11 +1684,12 @@ int find_victim_page(struct mm_struct *mm, addr_t *retpgn)
 // Yeu cau lay 1 vung (region) co kich thuoc size thuoc area co id la vmaid gan no vao newrg
 // Neu duoc tra ve 0
 // else ve -1 
-int get_free_vmrg_area(struct pcb_t *caller, int vmaid, int size, struct vm_rg_struct *newrg)
+int get_free_vmrg_area(struct pcb_t *caller, int vmaid, uint64_t size, struct vm_rg_struct *newrg)
 {
   // B1 : xac nhan input
   if(caller==NULL || caller->mm ==NULL){
     return -1;
+
   }
   // B2  lay khu vuc nho va con tro cua vung free (ranh roi) de dung
   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
@@ -1628,7 +1700,8 @@ int get_free_vmrg_area(struct pcb_t *caller, int vmaid, int size, struct vm_rg_s
     return -1;
 
   /* Probe unintialized newrg */
-  newrg->rg_start = newrg->rg_end = -1;
+  newrg->rg_start = newrg->rg_end = 0;
+
 
   // B3 Tim xem co vung nho nao co size phu hop ko
   /* Traverse on list of free vm region to find a fit space */
@@ -1677,7 +1750,7 @@ int get_free_vmrg_area(struct pcb_t *caller, int vmaid, int size, struct vm_rg_s
     }
   }
 
-  if (newrg->rg_start == -1) // new region not found
+  if (newrg->rg_end == 0) // new region not found
     return -1;
 
   return 0;

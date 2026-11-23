@@ -176,9 +176,11 @@ static void run_sc17_02(void)
     sc17_proc_init(&env, &proc, &mm, 1702, 1);
 
     addr_t page_sz = (addr_t)test_memphy_page_size();
+    addr_t initial_vm_end = mm.mmap->vm_end; // Lưu lại giới hạn trên ban đầu (2^55)
+
     TEST_ASSERT_EQ(0, libsyscall(&proc, 17, SYSMEM_INC_OP, 0, page_sz));
     TEST_ASSERT_EQ(page_sz, mm.mmap->sbrk);
-    TEST_ASSERT_EQ(page_sz, mm.mmap->vm_end);
+    TEST_ASSERT_EQ(initial_vm_end, mm.mmap->vm_end); // vm_end không đổi sau khi tăng sbrk
     TEST_ASSERT(PAGING_PAGE_PRESENT(pte_get_entry(&mm, 0, &proc)) != 0);
 
     sc17_proc_destroy(&proc, &mm);

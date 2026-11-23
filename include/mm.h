@@ -160,7 +160,7 @@ int pgwrite(
 /* Local VM prototypes */
 struct vm_rg_struct * get_symrg_byid(struct mm_struct* mm, int rgid);
 int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, addr_t vmaend);
-int get_free_vmrg_area(struct pcb_t *caller, int vmaid, int size, struct vm_rg_struct *newrg);
+int get_free_vmrg_area(struct pcb_t *caller, int vmaid, uint64_t size, struct vm_rg_struct *newrg);
 int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz);
 int find_victim_page(struct mm_struct* mm, addr_t *pgn);
 struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid);
@@ -185,6 +185,11 @@ int print_list_vma(struct vm_area_struct *rg);
 int print_list_pgn(struct pgn_t *ip);
 int print_pgtbl(struct pcb_t *ip, addr_t start, addr_t end);
 
+/*Helper find rg and area*/
+
+struct vm_rg_struct *get_symrg_byaddr( struct mm_struct *mm,addr_t addr,int *rgid); 
+int select_vmaid(addr_t size);
+int find_free_symrg(struct mm_struct *mm);
 #ifdef __cplusplus
 }
 #endif

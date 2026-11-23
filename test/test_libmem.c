@@ -1,20 +1,23 @@
-#include "test_helpers.h"
+#include "os-cfg.h"
+#include "common.h"
+#include "mm.h"
+#include "mm64.h"
 #include "libmem.h"
 #include "queue.h"
-#include "syscall.h"
+#include "../include/syscall.h"
+#include "test_helpers.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-/* Khai bao ham dinh nghia trong src/libmem.c nhung chua co trong mm.h */
+/* Khai bao dung kieu 64-bit addr_t voi src/libmem.c */
 int free_pcb_memph(struct pcb_t *caller);
-int pg_getpage(struct mm_struct *mm, int pgn, int *fpn, struct pcb_t *caller);
-int pg_getval(struct mm_struct *mm, int addr, BYTE *data, struct pcb_t *caller);
-int pg_setval(struct mm_struct *mm, int addr, BYTE value, struct pcb_t *caller);
+int pg_getpage(struct mm_struct *mm, addr_t pgn, int *fpn, struct pcb_t *caller);
+int pg_getval(struct mm_struct *mm, addr_t addr, BYTE *data, struct pcb_t *caller);
+int pg_setval(struct mm_struct *mm, addr_t addr, BYTE value, struct pcb_t *caller);
+
 
 /*
- * Cung cap stub _syscall va bang syscall de link doc lap test_libmem
- * ma khong can keo theo Verilator / CPU / Loader.
+ * Stub _syscall va bang syscall de link doc lap test_libmem
  */
 const char *sys_call_table[] = {
     "sys_ni_syscall",
@@ -68,11 +71,11 @@ static void lm_cleanup_mm_structs(struct mm_struct *mm)
         free(vtmp);
     }
 
+#ifdef MM64
+    mm_free_page_tables(mm);
+#else
     free(mm->pgd);
-    free(mm->p4d);
-    free(mm->pud);
-    free(mm->pmd);
-    free(mm->pt);
+#endif
 }
 
 static void lm_env_init(struct lm_test_env *env, int ram_frames, int swp_frames)
@@ -109,7 +112,11 @@ static void lm_proc_init(struct lm_test_env *env, struct pcb_t *proc,
     proc->mm = mm;
     init_mm(mm, proc);
 
-    /* Dua proc vao running_list de __sys_memmap tim thay caller theo pid */
+    /* Khoi tao cac thanh ghi ve gia tri khong hop le (addr_t)-1 de tranh nham voi dia chi 0 */
+    for (int i = 0; i < MAXREG; i++) {
+        proc->regs[i] = (addr_t)-1;
+    }
+
     if (env->running_list.size < MAX_QUEUE_SIZE) {
         env->running_list.proc[env->running_list.size++] = proc;
     }
@@ -127,7 +134,6 @@ static void lm_env_destroy(struct lm_test_env *env)
         struct pcb_t dummy = {0};
         dummy.krnl = &env->krnl;
         dummy.mm = &env->kmm;
-        /* Thu hoi cac frame kernel da map (neu co) */
         for (int pgn = 0; pgn < 512; ++pgn) {
             addr_t pte = pte_get_entry(&env->kmm, (addr_t)pgn, &dummy);
             if (PAGING_PAGE_PRESENT(pte) && env->mram_ready) {
@@ -140,7 +146,6 @@ static void lm_env_destroy(struct lm_test_env *env)
     test_memphy_destroy(&env->mswp, env->mswp_ready);
 }
 
-/* Helper kiem tra 2 vung [s1, e1) va [s2, e2) khong chong lan */
 static int regions_disjoint(addr_t s1, addr_t e1, addr_t s2, addr_t e2)
 {
     return (e1 <= s2) || (e2 <= s1);
@@ -158,18 +163,27 @@ static void run_lm01(void)
 
     int ret = liballoc(&proc, 128, 0);
     TEST_ASSERT_EQ(0, ret);
-    TEST_ASSERT_EQ(VMA_SMALL, mm.symrgtbl[0].vmaid);
+    printf("DEBUG: sizeof(addr_t)=%zu, sizeof(pcb_t)=%zu, regs[0]=%lu, sym0=[%lu,%lu) vmaid=%d\n",
+       sizeof(addr_t), sizeof(struct pcb_t),
+       (unsigned long)proc.regs[0],
+       (unsigned long)mm.symrgtbl[0].rg_start,
+       (unsigned long)mm.symrgtbl[0].rg_end,
+       mm.symrgtbl[0].vmaid);
+    int rgid = -1;
+    struct vm_rg_struct *rg = get_symrg_byaddr(&mm, proc.regs[0], &rgid);
+    TEST_ASSERT(rg != NULL);
+    TEST_ASSERT_EQ(VMA_SMALL, rg->vmaid);
 
-    struct vm_area_struct *vma = get_vma_by_num(&mm, mm.symrgtbl[0].vmaid);
+    struct vm_area_struct *vma = get_vma_by_num(&mm, rg->vmaid);
     TEST_ASSERT(vma != NULL);
-    TEST_ASSERT_EQ(vma->vm_start, mm.symrgtbl[0].rg_start);
-    TEST_ASSERT_EQ(vma->vm_start + 128, mm.symrgtbl[0].rg_end);
+    TEST_ASSERT_EQ(vma->vm_start, rg->rg_start);
+    TEST_ASSERT_EQ(vma->vm_start + 128, rg->rg_end);
 
     lm_proc_destroy(&proc, &mm);
     lm_env_destroy(&env);
 }
 
-/* LM02: ALLOC đúng kích thước một page */
+/* LM02: ALLOC đúng kích thước một page (voi reg_index != rgid) */
 static void run_lm02(void)
 {
     struct lm_test_env env;
@@ -180,13 +194,18 @@ static void run_lm02(void)
     lm_proc_init(&env, &proc, &mm, 102);
 
     addr_t page_sz = (addr_t)test_memphy_page_size();
-    int ret = liballoc(&proc, page_sz, 1);
+    int ret = liballoc(&proc, page_sz, 1); /* Cap vao reg 1 -> rgid dong la 0 */
     TEST_ASSERT_EQ(0, ret);
 
-    struct vm_area_struct *vma = get_vma_by_num(&mm, mm.symrgtbl[1].vmaid);
+    int rgid = -1;
+    struct vm_rg_struct *rg = get_symrg_byaddr(&mm, proc.regs[1], &rgid);
+    TEST_ASSERT(rg != NULL);
+    TEST_ASSERT_EQ(0, rgid);
+
+    struct vm_area_struct *vma = get_vma_by_num(&mm, rg->vmaid);
     TEST_ASSERT(vma != NULL);
-    TEST_ASSERT_EQ(vma->vm_start, mm.symrgtbl[1].rg_start);
-    TEST_ASSERT_EQ(vma->vm_start + page_sz, mm.symrgtbl[1].rg_end);
+    TEST_ASSERT_EQ(vma->vm_start, rg->rg_start);
+    TEST_ASSERT_EQ(vma->vm_start + page_sz, rg->rg_end);
     TEST_ASSERT_EQ(vma->vm_start + page_sz, vma->sbrk);
 
     lm_proc_destroy(&proc, &mm);
@@ -207,17 +226,21 @@ static void run_lm03(void)
     int ret = liballoc(&proc, req_sz, 2);
     TEST_ASSERT_EQ(0, ret);
 
-    struct vm_area_struct *vma = get_vma_by_num(&mm, mm.symrgtbl[2].vmaid);
+    int rgid = -1;
+    struct vm_rg_struct *rg = get_symrg_byaddr(&mm, proc.regs[2], &rgid);
+    TEST_ASSERT(rg != NULL);
+
+    struct vm_area_struct *vma = get_vma_by_num(&mm, rg->vmaid);
     TEST_ASSERT(vma != NULL);
-    TEST_ASSERT_EQ(vma->vm_start, mm.symrgtbl[2].rg_start);
-    TEST_ASSERT_EQ(vma->vm_start + req_sz, mm.symrgtbl[2].rg_end);
+    TEST_ASSERT_EQ(vma->vm_start, rg->rg_start);
+    TEST_ASSERT_EQ(vma->vm_start + req_sz, rg->rg_end);
     TEST_ASSERT_EQ(vma->vm_start + 2 * test_memphy_page_size(), vma->sbrk);
 
     lm_proc_destroy(&proc, &mm);
     lm_env_destroy(&env);
 }
 
-/* LM04: ALLOC nhiều lần - Các vùng không chồng lấn (co the nam khac VMA Small/Medium) */
+/* LM04: ALLOC nhiều lần - Các vùng không chồng lấn */
 static void run_lm04(void)
 {
     struct lm_test_env env;
@@ -231,16 +254,19 @@ static void run_lm04(void)
     TEST_ASSERT_EQ(0, liballoc(&proc, 1000, 1));
     TEST_ASSERT_EQ(0, liballoc(&proc, 2000, 2));
 
-    TEST_ASSERT_EQ(500, mm.symrgtbl[0].rg_end - mm.symrgtbl[0].rg_start);
-    TEST_ASSERT_EQ(1000, mm.symrgtbl[1].rg_end - mm.symrgtbl[1].rg_start);
-    TEST_ASSERT_EQ(2000, mm.symrgtbl[2].rg_end - mm.symrgtbl[2].rg_start);
+    int id0 = -1, id1 = -1, id2 = -1;
+    struct vm_rg_struct *r0 = get_symrg_byaddr(&mm, proc.regs[0], &id0);
+    struct vm_rg_struct *r1 = get_symrg_byaddr(&mm, proc.regs[1], &id1);
+    struct vm_rg_struct *r2 = get_symrg_byaddr(&mm, proc.regs[2], &id2);
+    TEST_ASSERT(r0 != NULL && r1 != NULL && r2 != NULL);
 
-    TEST_ASSERT(regions_disjoint(mm.symrgtbl[0].rg_start, mm.symrgtbl[0].rg_end,
-                                 mm.symrgtbl[1].rg_start, mm.symrgtbl[1].rg_end));
-    TEST_ASSERT(regions_disjoint(mm.symrgtbl[1].rg_start, mm.symrgtbl[1].rg_end,
-                                 mm.symrgtbl[2].rg_start, mm.symrgtbl[2].rg_end));
-    TEST_ASSERT(regions_disjoint(mm.symrgtbl[0].rg_start, mm.symrgtbl[0].rg_end,
-                                 mm.symrgtbl[2].rg_start, mm.symrgtbl[2].rg_end));
+    TEST_ASSERT_EQ(500, r0->rg_end - r0->rg_start);
+    TEST_ASSERT_EQ(1000, r1->rg_end - r1->rg_start);
+    TEST_ASSERT_EQ(2000, r2->rg_end - r2->rg_start);
+
+    TEST_ASSERT(regions_disjoint(r0->rg_start, r0->rg_end, r1->rg_start, r1->rg_end));
+    TEST_ASSERT(regions_disjoint(r1->rg_start, r1->rg_end, r2->rg_start, r2->rg_end));
+    TEST_ASSERT(regions_disjoint(r0->rg_start, r0->rg_end, r2->rg_start, r2->rg_end));
 
     lm_proc_destroy(&proc, &mm);
     lm_env_destroy(&env);
@@ -253,14 +279,11 @@ static void run_lm05(void)
     struct pcb_t proc;
     struct mm_struct mm;
 
-    /* RAM chỉ có 2 frame (8KB), SWAP có 4 frame -> xin 3 page (12KB) phải tận dụng SWAP thành công */
     lm_env_init(&env, 2, 4);
     lm_proc_init(&env, &proc, &mm, 105);
 
     addr_t page_sz = (addr_t)test_memphy_page_size();
     TEST_ASSERT_EQ(0, liballoc(&proc, 3 * page_sz, 0));
-
-    /* Xin tiếp 5 page nữa vượt cả RAM + SWAP -> phải trả về lỗi -1 */
     TEST_ASSERT_EQ(-1, liballoc(&proc, 5 * page_sz, 1));
 
     lm_proc_destroy(&proc, &mm);
@@ -285,7 +308,7 @@ static void run_lm06(void)
     lm_env_destroy(&env);
 }
 
-/* LM07: ALLOC vượt khả năng virtual memory */
+/* LM07: ALLOC vượt khả năng virtual/physical memory */
 static void run_lm07(void)
 {
     struct lm_test_env env;
@@ -295,7 +318,6 @@ static void run_lm07(void)
     lm_env_init(&env, 4, 4);
     lm_proc_init(&env, &proc, &mm, 107);
 
-    /* Xin kích thước khổng lồ vượt quá tài nguyên hệ thống */
     addr_t huge_sz = 1024ULL * 1024ULL * 1024ULL;
     TEST_ASSERT_EQ(-1, liballoc(&proc, huge_sz, 0));
 
@@ -314,15 +336,19 @@ static void run_lm08(void)
     lm_proc_init(&env, &proc, &mm, 108);
 
     TEST_ASSERT_EQ(0, liballoc(&proc, 512, 0));
-    int allocated_vmaid = mm.symrgtbl[0].vmaid;
-    addr_t exp_start = mm.symrgtbl[0].rg_start;
-    addr_t exp_end = mm.symrgtbl[0].rg_end;
+    int rgid = -1;
+    struct vm_rg_struct *rg = get_symrg_byaddr(&mm, proc.regs[0], &rgid);
+    TEST_ASSERT(rg != NULL);
+
+    int allocated_vmaid = rg->vmaid;
+    addr_t exp_start = rg->rg_start;
+    addr_t exp_end = rg->rg_end;
 
     TEST_ASSERT_EQ(0, libfree(&proc, 0));
-    TEST_ASSERT_EQ(0, mm.symrgtbl[0].rg_start);
-    TEST_ASSERT_EQ(0, mm.symrgtbl[0].rg_end);
+    TEST_ASSERT_EQ(0, mm.symrgtbl[rgid].rg_start);
+    TEST_ASSERT_EQ(0, mm.symrgtbl[rgid].rg_end);
+    TEST_ASSERT_EQ(-1, mm.symrgtbl[rgid].vmaid);
 
-    /* Vùng [exp_start, exp_end) phải xuất hiện trong vm_freerg_list của đúng VMA đã cấp phát */
     struct vm_area_struct *vma = get_vma_by_num(&mm, allocated_vmaid);
     TEST_ASSERT(vma != NULL);
 
@@ -341,7 +367,7 @@ static void run_lm08(void)
     lm_env_destroy(&env);
 }
 
-/* LM09: FREE hai lần (Double free) */
+/* LM09: FREE hai lần (Double free) và không free nhầm vùng mới ở địa chỉ 0 */
 static void run_lm09(void)
 {
     struct lm_test_env env;
@@ -355,11 +381,15 @@ static void run_lm09(void)
     TEST_ASSERT_EQ(0, libfree(&proc, 3));
     TEST_ASSERT_EQ(-1, libfree(&proc, 3));
 
+    /* Cap phat vung moi vao reg 4 (lay lai dia chi 0), goi lai free(3) phai bao loi -1 */
+    TEST_ASSERT_EQ(0, liballoc(&proc, 128, 4));
+    TEST_ASSERT_EQ(-1, libfree(&proc, 3));
+
     lm_proc_destroy(&proc, &mm);
     lm_env_destroy(&env);
 }
 
-/* LM10: FREE địa chỉ / region không tồn tại */
+/* LM10: FREE thanh ghi chưa cấp phát hoặc ngoài phạm vi */
 static void run_lm10(void)
 {
     struct lm_test_env env;
@@ -370,13 +400,13 @@ static void run_lm10(void)
     lm_proc_init(&env, &proc, &mm, 110);
 
     TEST_ASSERT_EQ(-1, libfree(&proc, 5));
-    TEST_ASSERT_EQ(-1, libfree(&proc, PAGING_MAX_SYMTBL_SZ + 1));
+    TEST_ASSERT_EQ(-1, libfree(&proc, MAXREG + 1));
 
     lm_proc_destroy(&proc, &mm);
     lm_env_destroy(&env);
 }
 
-/* LM11: ALLOC sau FREE - Tái sử dụng vùng đã thu hồi (trong cung VMA) */
+/* LM11: ALLOC sau FREE - Tái sử dụng vùng đã thu hồi */
 static void run_lm11(void)
 {
     struct lm_test_env env;
@@ -386,10 +416,12 @@ static void run_lm11(void)
     lm_env_init(&env, 4, 4);
     lm_proc_init(&env, &proc, &mm, 111);
 
-    /* Cap phat 256B va 128B de chac chan ca 2 deu thuoc VMA_SMALL */
     TEST_ASSERT_EQ(0, liballoc(&proc, 256, 0));
-    int vmaid0 = mm.symrgtbl[0].vmaid;
-    addr_t orig_start = mm.symrgtbl[0].rg_start;
+    int id0 = -1;
+    struct vm_rg_struct *r0 = get_symrg_byaddr(&mm, proc.regs[0], &id0);
+    TEST_ASSERT(r0 != NULL);
+    int vmaid0 = r0->vmaid;
+    addr_t orig_start = r0->rg_start;
 
     struct vm_area_struct *vma = get_vma_by_num(&mm, vmaid0);
     TEST_ASSERT(vma != NULL);
@@ -397,11 +429,13 @@ static void run_lm11(void)
 
     TEST_ASSERT_EQ(0, libfree(&proc, 0));
 
-    /* Cấp phát lại 128B phải lấy lại từ vùng vừa free mà không tăng sbrk của VMA đó */
     TEST_ASSERT_EQ(0, liballoc(&proc, 128, 1));
-    TEST_ASSERT_EQ(vmaid0, mm.symrgtbl[1].vmaid);
-    TEST_ASSERT_EQ(orig_start, mm.symrgtbl[1].rg_start);
-    TEST_ASSERT_EQ(orig_start + 128, mm.symrgtbl[1].rg_end);
+    int id1 = -1;
+    struct vm_rg_struct *r1 = get_symrg_byaddr(&mm, proc.regs[1], &id1);
+    TEST_ASSERT(r1 != NULL);
+    TEST_ASSERT_EQ(vmaid0, r1->vmaid);
+    TEST_ASSERT_EQ(orig_start, r1->rg_start);
+    TEST_ASSERT_EQ(orig_start + 128, r1->rg_end);
     TEST_ASSERT_EQ(sbrk_before, vma->sbrk);
 
     lm_proc_destroy(&proc, &mm);
@@ -490,7 +524,7 @@ static void run_lm15(void)
     uint32_t dst_reg = 7;
     TEST_ASSERT_EQ(-1, libread(&proc, 0, 200, &dst_reg));
     TEST_ASSERT_EQ(-1, libread(&proc, 0, 500, &dst_reg));
-    TEST_ASSERT_EQ(-1, libread(&proc, 1, 0, &dst_reg)); /* Region 1 chưa cấp phát */
+    TEST_ASSERT_EQ(-1, libread(&proc, 1, 0, &dst_reg));
 
     lm_proc_destroy(&proc, &mm);
     lm_env_destroy(&env);
@@ -510,10 +544,8 @@ static void run_lm16(void)
     TEST_ASSERT_EQ(0, liballoc(&proc, 100, 1));
     TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0x11, 1, 0));
 
-    /* Ghi vượt biên region 0 (offset 100 chạm vào đầu region 1) phải bị từ chối */
     TEST_ASSERT_EQ(-1, libwrite(&proc, (BYTE)0x99, 0, 100));
 
-    /* Dữ liệu đầu region 1 phải còn nguyên 0x11 */
     uint32_t dst_reg = 7;
     TEST_ASSERT_EQ(0, libread(&proc, 1, 0, &dst_reg));
     TEST_ASSERT_EQ(0x11, proc.regs[dst_reg]);
@@ -535,7 +567,6 @@ static void run_lm17(void)
     addr_t page_sz = (addr_t)test_memphy_page_size();
     TEST_ASSERT_EQ(0, liballoc(&proc, 2 * page_sz, 0));
 
-    /* Ghi 16 byte vắt ngang ranh giới page 0 (offset 4088..4095) sang page 1 (4096..4103) */
     addr_t cross_start = page_sz - 8;
     for (int i = 0; i < 16; ++i) {
         BYTE b = (BYTE)(0xA0 + i);
@@ -553,7 +584,7 @@ static void run_lm17(void)
     lm_env_destroy(&env);
 }
 
-/* LM18: Đọc page chưa present (Demand paging / Page fault path trong pg_getpage) */
+/* LM18: Đọc page chưa present (Demand paging trong pg_getpage) */
 static void run_lm18(void)
 {
     struct lm_test_env env;
@@ -563,7 +594,6 @@ static void run_lm18(void)
     lm_env_init(&env, 4, 4);
     lm_proc_init(&env, &proc, &mm, 118);
 
-    /* Trang 5 chưa present -> pg_getpage phải tự động xin frame RAM và map vào PTE */
     TEST_ASSERT_EQ(0, PAGING_PAGE_PRESENT(pte_get_entry(&mm, 5, &proc)));
     int fpn = -1;
     TEST_ASSERT_EQ(0, pg_getpage(&mm, 5, &fpn, &proc));
@@ -581,28 +611,25 @@ static void run_lm19(void)
     struct pcb_t proc;
     struct mm_struct mm;
 
-    /* Giới hạn RAM chỉ có 2 frame (8KB), SWAP có 4 frame -> dùng 4 page (16KB) chắc chắn phải SWAP */
     lm_env_init(&env, 2, 4);
     lm_proc_init(&env, &proc, &mm, 119);
 
     addr_t page_sz = (addr_t)test_memphy_page_size();
     TEST_ASSERT_EQ(0, liballoc(&proc, 4 * page_sz, 0));
 
-    /* Ghi dữ liệu đặc trưng lên đầu và cuối mỗi trang trong cả 4 trang */
     for (int p = 0; p < 4; ++p) {
         addr_t base = (addr_t)p * page_sz;
         TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)(0x10 + p), 0, base));
         TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)(0x80 + p), 0, base + page_sz - 1));
     }
 
-    /* Lúc này trang 0 và trang 1 đã bị đẩy ra SWAP; đọc lại từng trang buộc hệ thống SWAP IN */
     uint32_t reg_head = 6, reg_tail = 7;
     for (int p = 0; p < 4; ++p) {
         addr_t base = (addr_t)p * page_sz;
         TEST_ASSERT_EQ(0, libread(&proc, 0, base, &reg_head));
         TEST_ASSERT_EQ(0, libread(&proc, 0, base + page_sz - 1, &reg_tail));
-        TEST_ASSERT_EQ((uint32_t)(0x10 + p), proc.regs[reg_head]);
-        TEST_ASSERT_EQ((uint32_t)(0x80 + p), proc.regs[reg_tail]);
+        TEST_ASSERT_EQ((uint64_t)(0x10 + p), proc.regs[reg_head]);
+        TEST_ASSERT_EQ((uint64_t)(0x80 + p), proc.regs[reg_tail]);
     }
 
     lm_proc_destroy(&proc, &mm);
@@ -624,7 +651,6 @@ static void run_lm20(void)
     TEST_ASSERT_EQ(0, env.kmm.symrgtbl[0].rg_start);
     TEST_ASSERT_EQ(2 * page_sz, env.kmm.symrgtbl[0].rg_end);
 
-    /* Xác minh 2 trang kernel đều nằm trên RAM (PRESENT) và không đưa vào fifo_pgn của user */
     TEST_ASSERT(PAGING_PAGE_PRESENT(pte_get_entry(&env.kmm, 0, &proc)) != 0);
     TEST_ASSERT(PAGING_PAGE_PRESENT(pte_get_entry(&env.kmm, 1, &proc)) != 0);
     TEST_ASSERT(env.kmm.fifo_pgn == NULL);
@@ -643,34 +669,27 @@ static void run_lm21(void)
     lm_env_init(&env, 8, 4);
     lm_proc_init(&env, &proc, &mm, 121);
 
-    /* Cấp phát region 0 bên User và region 0 bên Kernel */
     TEST_ASSERT_EQ(0, liballoc(&proc, 256, 0));
     TEST_ASSERT_EQ(0, libkmem_malloc(&proc, 256, 0));
 
-    /* Ghi chuỗi 16 byte vào User region 0 tại offset 10..25 */
     for (int i = 0; i < 16; ++i) {
         TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)(0x30 + i), 0, (addr_t)(10 + i)));
     }
 
-    /* Copy từ User -> Kernel */
     TEST_ASSERT_EQ(0, libkmem_copy_from_user(&proc, 0, 0, 10, 16));
 
-    /* Sửa dữ liệu bên User thành 0xFF để đảm bảo không đọc nhầm từ User */
     for (int i = 0; i < 16; ++i) {
         TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0xFF, 0, (addr_t)(10 + i)));
     }
 
-    /* Copy ngược lại từ Kernel -> User */
     TEST_ASSERT_EQ(0, libkmem_copy_to_user(&proc, 0, 0, 10, 16));
 
-    /* Kiểm tra dữ liệu ban đầu 0x30..0x3F đã quay về User */
     uint32_t dst_reg = 7;
     for (int i = 0; i < 16; ++i) {
         TEST_ASSERT_EQ(0, libread(&proc, 0, (addr_t)(10 + i), &dst_reg));
         TEST_ASSERT_EQ((uint32_t)(0x30 + i), proc.regs[dst_reg]);
     }
 
-    /* Kiểm tra chặn copy vượt biên */
     TEST_ASSERT_EQ(-1, libkmem_copy_from_user(&proc, 0, 0, 250, 16));
 
     lm_proc_destroy(&proc, &mm);
@@ -699,6 +718,103 @@ static void run_lm22(void)
     verify_memphy_invariants(&env.mswp, 4);
 
     lm_cleanup_mm_structs(&mm);
+    lm_env_destroy(&env);
+}
+
+/* LM23: Phân tuyến 3 VMA (SMALL / MEDIUM / LARGE) theo kích thước macOS layout */
+static void run_lm23(void)
+{
+    struct lm_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+
+    lm_env_init(&env, 64, 16);
+    lm_proc_init(&env, &proc, &mm, 123);
+
+    addr_t sz_small = SMALL_MAX_SIZE;          /* VMA_SMALL */
+    addr_t sz_med   =  4096;   /* VMA_MEDIUM */
+    addr_t sz_large = MEDIUM_MAX_SIZE + 4096;  /* VMA_LARGE */
+
+    TEST_ASSERT_EQ(0, liballoc(&proc, sz_small, 0));
+    TEST_ASSERT_EQ(0, liballoc(&proc, sz_med,   1));
+    TEST_ASSERT_EQ(0, liballoc(&proc, sz_large, 2));
+
+    int id_s = -1, id_m = -1, id_l = -1;
+    struct vm_rg_struct *rg_s = get_symrg_byaddr(&mm, proc.regs[0], &id_s);
+    struct vm_rg_struct *rg_m = get_symrg_byaddr(&mm, proc.regs[1], &id_m);
+    struct vm_rg_struct *rg_l = get_symrg_byaddr(&mm, proc.regs[2], &id_l);
+
+    TEST_ASSERT(rg_s != NULL && rg_m != NULL && rg_l != NULL);
+    TEST_ASSERT_EQ(VMA_SMALL,  rg_s->vmaid);
+    TEST_ASSERT_EQ(VMA_MEDIUM, rg_m->vmaid);
+    TEST_ASSERT_EQ(VMA_LARGE,  rg_l->vmaid);
+
+    /* Ghi va doc kiem tra bang phan trang 5 cap o dia chi cao 2^55 va 2^56 */
+    TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0xAA, 1, 100));
+    TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0xBB, 2, 200));
+
+    uint32_t dst_reg = 5;
+    TEST_ASSERT_EQ(0, libread(&proc, 1, 100, &dst_reg));
+    TEST_ASSERT_EQ(0xAA, proc.regs[dst_reg]);
+    TEST_ASSERT_EQ(0, libread(&proc, 2, 200, &dst_reg));
+    TEST_ASSERT_EQ(0xBB, proc.regs[dst_reg]);
+
+    lm_proc_destroy(&proc, &mm);
+    lm_env_destroy(&env);
+}
+
+/* LM24: DMA memcpy bất đồng bộ + kiểm tra chặn hazard (RAW/WAW/WAR) + ngắt hoàn tất */
+static void run_lm24(void)
+{
+    struct lm_test_env env;
+    struct pcb_t proc;
+    struct mm_struct mm;
+    struct code_seg_t code;
+    struct inst_t insts[4];
+
+    lm_env_init(&env, 8, 4);
+    lm_proc_init(&env, &proc, &mm, 124);
+
+    /* Cap phat 2 vung nho 2 trang (8192B) de test DMA cat qua ranh gioi trang 4KB */
+    addr_t page_sz = (addr_t)test_memphy_page_size();
+    TEST_ASSERT_EQ(0, liballoc(&proc, 2 * page_sz, 1));
+    TEST_ASSERT_EQ(0, liballoc(&proc, 2 * page_sz, 2));
+
+    /* Nap lenh DMA copy 6000 byte (2 chuyen DMA: 4096B + 1904B) */
+    TEST_ASSERT_EQ(0, libmem_dma_memcpy(&proc, 1, 2, 0, 6000));
+    TEST_ASSERT_EQ(2, libmem_dma_inflight(proc.pid));
+
+    /* Gia lap chuong trinh sap chay cac lenh ke tiep de test hazard */
+    memset(&code, 0, sizeof(code));
+    code.size = 4;
+    code.text = insts;
+    proc.code = &code;
+
+    /* Lenh 0: READ tu reg 2 (vung dich DMA) -> phai bi chan (RAW hazard) */
+    insts[0].opcode = READ; insts[0].arg_0 = 2; insts[0].arg_1 = 0; insts[0].arg_2 = 5;
+    proc.pc = 0;
+    TEST_ASSERT_EQ(1, libmem_dma_blocked(&proc));
+
+    /* Lenh 1: READ tu reg 1 (vung nguon DMA) -> duoc phep doc song song */
+    insts[1].opcode = READ; insts[1].arg_0 = 1; insts[1].arg_1 = 0; insts[1].arg_2 = 5;
+    proc.pc = 1;
+    TEST_ASSERT_EQ(0, libmem_dma_blocked(&proc));
+
+    /* Lenh 2: WRITE vao reg 1 (vung nguon DMA) -> phai bi chan (WAR hazard) */
+    insts[2].opcode = WRITE; insts[2].arg_0 = 0x11; insts[2].arg_1 = 1; insts[2].arg_2 = 0;
+    proc.pc = 2;
+    TEST_ASSERT_EQ(1, libmem_dma_blocked(&proc));
+
+    /* Nhan 2 ngat hoan tat DMA -> het job in-flight -> het bi chan */
+    uint32_t c_pid, c_src, c_dst, c_len;
+    TEST_ASSERT_EQ(0, libmem_dma_complete(&c_pid, &c_src, &c_dst, &c_len));
+    TEST_ASSERT_EQ(0, libmem_dma_complete(&c_pid, &c_src, &c_dst, &c_len));
+    TEST_ASSERT_EQ(0, libmem_dma_inflight(proc.pid));
+
+    proc.pc = 0;
+    TEST_ASSERT_EQ(0, libmem_dma_blocked(&proc));
+
+    lm_proc_destroy(&proc, &mm);
     lm_env_destroy(&env);
 }
 
@@ -732,6 +848,8 @@ int main(void)
     RUN_TEST("LM20", "KMALLOC contiguous kernel memory pages", run_lm20);
     RUN_TEST("LM21", "COPY FROM USER and COPY TO USER data integrity", run_lm21);
     RUN_TEST("LM22", "FREE all process memory and verify invariants", run_lm22);
+    RUN_TEST("LM23", "Route SMALL / MEDIUM / LARGE VMAs via 5-level paging", run_lm23);
+    RUN_TEST("LM24", "DMA multi-page split, RAW/WAR hazard blocking, and IRQ completion", run_lm24);
 
     test_summary();
     return 0;
