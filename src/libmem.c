@@ -193,8 +193,8 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
        get_symrg_byid(caller->mm, rgid);
 
      if (rgnode == NULL ||
-    rgnode->vmaid != vmaid ||
-    (rgnode->rg_start == 0 && rgnode->rg_end == 0) ||
+    rgnode->vmaid != vmaid || 
+    rgnode->vmaid < 0||
     rgnode->rg_start >= rgnode->rg_end) {
     pthread_mutex_unlock(&mmvm_lock);
     return -1;
@@ -310,9 +310,7 @@ int libfree(struct pcb_t *proc, uint32_t reg_index)
 
     addr_t addr = proc->regs[reg_index];
 
-    if (addr == 0)
-        return -1;
-
+   
     int rgid = -1;
 
     struct vm_rg_struct *rgnode =
@@ -632,21 +630,29 @@ int libread(
     uint32_t* destination)
 {
   if (proc == NULL || proc->mm == NULL ||
-    destination == NULL || *destination >= MAXREG)
-    return -1;
-  BYTE data;
-  printf("%s:%d\n",__func__,__LINE__);
+        destination == NULL ||
+        source >= MAXREG || *destination >= MAXREG)
+        return -1;
 
-  // Doc gia tri tai vi tri source + offset va gan vao 
-  
-  struct vm_rg_struct *rgnode =
-    get_symrg_byid(proc->mm, source);
+    BYTE data;
 
-  if (rgnode == NULL ||
-    rgnode->rg_start >= rgnode->rg_end)
-    return -1;
+    // B1: Lay dia chi region tu thanh ghi nguon
+    addr_t source_addr = (addr_t)proc->regs[source];
 
-  int vmaid = rgnode->vmaid;
+    // B2: Tim region va rgid theo dia chi
+    int rgid;
+    struct vm_rg_struct *rgnode =
+        get_symrg_byaddr(proc->mm, source_addr, &rgid);
+
+    if (rgnode == NULL || rgnode->rg_start >= rgnode->rg_end)
+        return -1;
+
+    // B3: Lay VMA ID cua region
+    int vmaid = rgnode->vmaid;
+
+    if (vmaid < 0)
+        return -1;
+
   int val = __read(proc, vmaid, source, offset, &data);
   if(val<0){
     return -1;
@@ -705,25 +711,37 @@ int __write(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE value
 }
 
 /*libwrite - PAGING-based write a region memory */
+/*libwrite - PAGING-based write a region memory */
 int libwrite(
     struct pcb_t *proc,   // Process executing the instruction
     BYTE data,            // Data to be wrttien into memory
     uint32_t destination, // Index of destination register
     addr_t offset)
 {
- if (proc == NULL || proc->mm == NULL ||
-    destination >= MAXREG)
+  if (proc == NULL || proc->mm == NULL ||
+      destination >= MAXREG)
     return -1;
 
+  // B1: Lay dia chi region tu thanh ghi dich
+  addr_t destination_addr = (addr_t)proc->regs[destination];
+
+  // B2: Tim region va rgid theo dia chi
+  int rgid;
   struct vm_rg_struct *rgnode =
-    get_symrg_byid(proc->mm, destination);
+      get_symrg_byaddr(proc->mm, destination_addr, &rgid);
 
-if (rgnode == NULL ||
-    rgnode->rg_start >= rgnode->rg_end)
+  if (rgnode == NULL ||
+      rgnode->rg_start >= rgnode->rg_end)
     return -1;
 
-int vmaid = rgnode->vmaid;
-  int val = __write(proc, vmaid, destination, offset, data);
+  // B3: Lay VMA ID cua region
+  int vmaid = rgnode->vmaid;
+
+  if (vmaid < 0)
+    return -1;
+
+  // B4: Ghi du lieu vao region
+  int val = __write(proc, vmaid, rgid, offset, data);
   if (val == -1)
   {
     return -1;
