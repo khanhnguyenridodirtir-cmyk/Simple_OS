@@ -120,6 +120,11 @@ extern "C" int dpi_rtl_dma_copy(uint64_t source, uint64_t destination,
     top->ch_enable = 0;
     clock_cycle();
 
+    printf("[DMA START] SRC=0x%llx DST=0x%llx LEN=%llu bytes\n",
+       (unsigned long long)source,
+       (unsigned long long)destination,
+       (unsigned long long)length);
+
     top->desc_data_0 = source;       /* byte offset from RAM base */
     top->desc_data_1 = destination;  /* byte offset from RAM base */
     top->desc_data_2 = length;       /* byte count */
@@ -146,9 +151,21 @@ extern "C" int dpi_rtl_dma_copy(uint64_t source, uint64_t destination,
     const unsigned int max_cycles =
         max_cycles64 > 10000000ULL ? 10000000U : (unsigned int)max_cycles64;
     cycles = 0;
+    unsigned int last_state = top->state;
+
     while (!top->ch_done && !top->ch_error && cycles < max_cycles) {
         clock_cycle();
         ++cycles;
+
+        if (top->state != last_state) {
+            printf("[DMA STATE] %u -> %u | cycle=%u | transferred=%u bytes\n",
+                last_state,
+                top->state,
+                cycles,
+                top->ch_bytes_transferred);
+
+            last_state = top->state;
+        }
     }
 
     const bool completed = top->ch_done;
