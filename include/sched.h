@@ -30,6 +30,18 @@ void add_proc(struct pcb_t * proc);
 
 void finish_proc(struct pcb_t * proc);
 
+//HELPER TIM KIEM
+struct queue_t;
+typedef int (*sched_running_match_t)(struct pcb_t *, void *);
+struct pcb_t *sched_find_running_proc_in(struct queue_t *list,
+                                        sched_running_match_t match,
+                                        void *arg);
+struct pcb_t *sched_find_running_pid_in(struct queue_t *list, uint32_t pid);
+struct pcb_t *sched_find_running_proc(sched_running_match_t match, void *arg);
+struct pcb_t *sched_find_running_pid(uint32_t pid);
+
+
+
 #ifdef __cplusplus
 }
 #endif
