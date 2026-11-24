@@ -21,6 +21,13 @@
 #include <pthread.h>
 #include <limits.h>
 
+extern void libmem_mmvm_lock(void);
+extern void libmem_mmvm_unlock(void);
+extern addr_t vm_map_ram_locked(struct pcb_t *caller, addr_t astart,
+                                addr_t aend, addr_t mapstart,
+                                int incpgnum,
+                                struct vm_rg_struct *ret_rg);
+
 /*
  * get_vma_by_num - find a VMA by its exact ID.
  *
@@ -165,7 +172,8 @@ static int align_size_to_page(addr_t size, addr_t *aligned_size)
  * be moved when an allocation grows; only sbrk advances. This is essential
  * for keeping the SMALL/MEDIUM/LARGE address areas disjoint.
  */
-int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
+static int inc_vma_limit_locked(struct pcb_t *caller, int vmaid,
+                                addr_t inc_sz)
 {
   struct mm_struct *mm;
   struct vm_area_struct *vma;
@@ -210,8 +218,8 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
     return -1;
   new_freerg->vmaid = vmaid;
 
-  map_result = vm_map_ram(caller, vma->vm_start, vma->vm_end,
-                          old_sbrk, (int)page_count, &mapped_rg);
+  map_result = vm_map_ram_locked(caller, vma->vm_start, vma->vm_end,
+                                 old_sbrk, (int)page_count, &mapped_rg);
   if (map_result != 0) {
     free(new_freerg);
     return -1;
@@ -228,6 +236,16 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
   }
 
   return 0;
+}
+
+/* Public interface for syscall and other callers. The complete VMA growth
+ * transaction, including frame allocation and victim replacement, is locked. */
+int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
+{
+  libmem_mmvm_lock();
+  int ret = inc_vma_limit_locked(caller, vmaid, inc_sz);
+  libmem_mmvm_unlock();
+  return ret;
 }
 
 // #endif

@@ -15,10 +15,31 @@
 
 #include "mm64.h"   // Quan ly co che phan trang va khung vat ly
 #include "queue.h"
+#include "sched.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
 #include <stdint.h> // De dung kieu uintptr_t an toan khi ep kieu dia chi bang trang
+
+/* VM lock and locked helpers are implemented by the memory library. */
+extern void libmem_mmvm_lock(void);
+extern void libmem_mmvm_unlock(void);
+extern int find_victim_page_locked(struct mm_struct *mm, addr_t *retpgn);
+
+struct mm64_victim_query {
+  struct mm_struct *kernel_mm;
+  addr_t pgn;
+};
+
+static int mm64_running_proc_has_victim(struct pcb_t *proc, void *arg)
+{
+  struct mm64_victim_query *query = arg;
+
+  if (proc->mm == NULL || proc->mm == query->kernel_mm)
+    return 0;
+
+  return find_victim_page_locked(proc->mm, &query->pgn) == 0;
+}
 
 #if defined(MM64)
 
@@ -392,19 +413,20 @@ addr_t alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_st
 
       // B3 : Neu het RAM, tim trang nan nhan (victim) trong FIFO cua tien trinh hien tai
       /* 1. Tìm trang nạn nhân trong chính tiến trình gọi */
-      if (find_victim_page(mm, &vicpgn) < 0)
+      if (find_victim_page_locked(mm, &vicpgn) < 0)
       {
         // B3.1 : Tim victim o cac tien trinh khac trong running_list
         /* 2. Tìm trang nạn nhân ở các tiến trình khác đang chạy (Global Replacement) */
         vic_proc = NULL;
-        if (caller->krnl && caller->krnl->running_list) {
-          for (int i = 0; i < caller->krnl->running_list->size; i++) {
-            struct pcb_t *p = caller->krnl->running_list->proc[i];
-            if (p && p->mm && find_victim_page(p->mm, &vicpgn) == 0) {
-              vic_proc = p;
-              break;
-            }
-          }
+        if (caller->krnl != NULL) {
+          struct mm64_victim_query query = {
+            .kernel_mm = caller->krnl->mm
+          };
+          vic_proc = sched_find_running_proc_in(caller->krnl->running_list,
+                                                mm64_running_proc_has_victim,
+                                                &query);
+          if (vic_proc != NULL)
+            vicpgn = query.pgn;
         }
       }
 
@@ -421,8 +443,13 @@ addr_t alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_st
           return -3000;
         }
 
-        __swap_cp_page(mram, vicfpn, mswp, swpfpn);
-        pte_set_swap(vic_proc, vicpgn, 0, swpfpn);
+        if (__swap_cp_page(mram, vicfpn, mswp, swpfpn) < 0 ||
+            pte_set_swap(vic_proc, vicpgn, 0, swpfpn) < 0) {
+            MEMPHY_put_freefp(mswp, swpfpn);
+            enlist_pgn_node(&vic_proc->mm->fifo_pgn, vicpgn);
+            *frm_lst = head;
+            return -3000;
+        }
         fpn = vicfpn;
       }
       else
@@ -438,7 +465,11 @@ addr_t alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_st
         if (pending_vic != NULL && mswp != NULL && MEMPHY_get_freefp(mswp, &swpfpn) == 0)
         {
           // B5.1 : Chuyen frame dau tien trong head sang SWAP va giu cho swpfpn (khong tra lai free list)
-          __swap_cp_page(mram, pending_vic->fpn, mswp, swpfpn);
+          if (__swap_cp_page(mram, pending_vic->fpn, mswp, swpfpn) < 0) {
+              MEMPHY_put_freefp(mswp, swpfpn);
+              *frm_lst = head;
+              return -3000;
+          }
           fpn = pending_vic->fpn;
           pending_vic->fpn = PENDING_SWP_FLAG | swpfpn;
         }
@@ -493,7 +524,9 @@ addr_t alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_st
  * @incpgnum  : number of mapped page
  * @ret_rg    : returned region
  */
-addr_t vm_map_ram(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t mapstart, int incpgnum, struct vm_rg_struct *ret_rg)
+addr_t vm_map_ram_locked(struct pcb_t *caller, addr_t astart, addr_t aend,
+                         addr_t mapstart, int incpgnum,
+                         struct vm_rg_struct *ret_rg)
 {
   struct framephy_struct *frm_lst = NULL;
   int ret_alloc = 0;
@@ -543,6 +576,19 @@ addr_t vm_map_ram(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t mapst
   }
 
   return 0;
+}
+
+/* Public mapping interface: serialize allocation, victim selection, swap,
+ * and PTE installation as one VM transaction. */
+addr_t vm_map_ram(struct pcb_t *caller, addr_t astart, addr_t aend,
+                  addr_t mapstart, int incpgnum,
+                  struct vm_rg_struct *ret_rg)
+{
+  libmem_mmvm_lock();
+  addr_t ret = vm_map_ram_locked(caller, astart, aend, mapstart,
+                                 incpgnum, ret_rg);
+  libmem_mmvm_unlock();
+  return ret;
 }
 
 /*
@@ -616,6 +662,8 @@ addr_t vm_map_kernel(struct pcb_t *caller, addr_t astart, addr_t aend,
 int __swap_cp_page(struct memphy_struct *mpsrc, addr_t srcfpn,
                    struct memphy_struct *mpdst, addr_t dstfpn)
 {
+  if (mpsrc == NULL || mpdst == NULL)
+    return -1;
   int cellidx;
   addr_t addrsrc, addrdst;
 
@@ -632,13 +680,15 @@ int __swap_cp_page(struct memphy_struct *mpsrc, addr_t srcfpn,
 #endif
 
     BYTE data;
-    MEMPHY_read(mpsrc, addrsrc, &data);
-    MEMPHY_write(mpdst, addrdst, data);
+    if (MEMPHY_read(mpsrc, addrsrc, &data) != 0)
+      return -1;
+    if (MEMPHY_write(mpdst, addrdst, data) != 0)
+      return -1;
   }
 
+  
   return 0;
 }
-
 /*
  * Create one VMA descriptor and its initially-empty free-region sentinel.
  * vm_start/vm_end reserve the virtual-address interval [start, end), while
