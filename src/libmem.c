@@ -1416,30 +1416,43 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
    */
   //__read_user_mem(...)
   //__write_kernel_mem(...);
-
+  pthread_mutex_lock(&kmm_lock);
+  pthread_mutex_lock(&mmvm_lock);
   // B1: Kiem tra hai region va toan bo khoang copy truoc khi ghi du lieu
-  if (caller == NULL || caller->mm == NULL || caller->krnl == NULL || caller->krnl->mm == NULL || size == 0)
+  if (caller == NULL || caller->mm == NULL || caller->krnl == NULL || caller->krnl->mm == NULL || size == 0){
+    pthread_mutex_unlock(&kmm_lock);
+    pthread_mutex_unlock(&mmvm_lock);
     return -1;
+  }
   struct vm_rg_struct *user_region =  get_symrg_byid(caller->mm, (int)source);
 
   struct vm_rg_struct *kernel_region =
       get_symrg_byid(caller->krnl->mm, (int)destination);
 
-  if (user_region == NULL || kernel_region == NULL)
+  if (user_region == NULL || kernel_region == NULL){
+    pthread_mutex_unlock(&kmm_lock);
+    pthread_mutex_unlock(&mmvm_lock);
     return -1;
+  }
     // B2: Lay VMA ID tu tung region
   int user_vmaid = user_region->vmaid;
   int kernel_vmaid = kernel_region->vmaid;
 
-  if (user_vmaid < 0 || kernel_vmaid < 0)
+  if (user_vmaid < 0 || kernel_vmaid < 0){
+    pthread_mutex_unlock(&kmm_lock);
+    pthread_mutex_unlock(&mmvm_lock);
     return -1;
+  
+  }
    // B3: Kiem tra toan bo khoang copy truoc khi ghi
   if (validate_mem_region(caller->mm, user_vmaid,
                           (int)source, offset, size) < 0 ||
       validate_mem_region(caller->krnl->mm, kernel_vmaid,
-                          (int)destination, offset, size) < 0)
-    return -1;
-
+                          (int)destination, offset, size) < 0){
+      pthread_mutex_unlock(&kmm_lock);
+      pthread_mutex_unlock(&mmvm_lock);
+      return -1;
+  }
   // B4: Copy tung byte tu User MM sang Kernel MM
   for (uint32_t i = 0; i < size; i++)
   {
@@ -1448,10 +1461,14 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
     if (__read_user_mem(caller, user_vmaid,
                         (int)source, offset + i, &data) < 0 ||
         __write_kernel_mem(caller, kernel_vmaid,
-                           (int)destination, offset + i, data) < 0)
+                           (int)destination, offset + i, data) < 0){
+      pthread_mutex_unlock(&kmm_lock);
+      pthread_mutex_unlock(&mmvm_lock);
       return -1;
+    }
   }
-
+   pthread_mutex_unlock(&kmm_lock);
+    pthread_mutex_unlock(&mmvm_lock);
   return 0;
 }
 int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destination, uint32_t offset, uint32_t size)
@@ -1463,12 +1480,15 @@ int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destina
    */
   //__read_kernel_mem(...)
   //__write_user_mem(...);
-
+  pthread_mutex_lock(&kmm_lock);
+  pthread_mutex_lock(&mmvm_lock);
   if (caller == NULL || caller->mm == NULL ||
       caller->krnl == NULL || caller->krnl->mm == NULL ||
-      size == 0)
-    return -1;
-
+      size == 0){
+      pthread_mutex_unlock(&kmm_lock);
+      pthread_mutex_unlock(&mmvm_lock); 
+      return -1;
+  }
   // B1: Lay region tu Kernel MM va User MM
   struct vm_rg_struct *kernel_region =
       get_symrg_byid(caller->krnl->mm, (int)source);
@@ -1476,23 +1496,30 @@ int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destina
   struct vm_rg_struct *user_region =
       get_symrg_byid(caller->mm, (int)destination);
 
-  if (kernel_region == NULL || user_region == NULL)
+  if (kernel_region == NULL || user_region == NULL){
+    pthread_mutex_unlock(&kmm_lock);
+    pthread_mutex_unlock(&mmvm_lock);
     return -1;
-
+  }
   // B2: Lay VMA ID tu tung region
   int kernel_vmaid = kernel_region->vmaid;
   int user_vmaid = user_region->vmaid;
 
   if (kernel_vmaid < 0 || user_vmaid < 0)
-    return -1;
-
+    {
+      pthread_mutex_unlock(&kmm_lock);
+      pthread_mutex_unlock(&mmvm_lock);
+      return -1;
+    }
   // B3: Kiem tra toan bo khoang copy truoc khi ghi
   if (validate_mem_region(caller->krnl->mm, kernel_vmaid,
                           (int)source, offset, size) < 0 ||
       validate_mem_region(caller->mm, user_vmaid,
-                          (int)destination, offset, size) < 0)
-    return -1;
-
+                          (int)destination, offset, size) < 0){
+      pthread_mutex_unlock(&kmm_lock);
+      pthread_mutex_unlock(&mmvm_lock);
+      return -1;
+  }
   // B4: Copy tung byte tu Kernel MM sang User MM
   for (uint32_t i = 0; i < size; i++)
   {
@@ -1501,10 +1528,14 @@ int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destina
     if (__read_kernel_mem(caller, kernel_vmaid,
                           (int)source, offset + i, &data) < 0 ||
         __write_user_mem(caller, user_vmaid,
-                         (int)destination, offset + i, data) < 0)
+                         (int)destination, offset + i, data) < 0){
+      pthread_mutex_unlock(&kmm_lock);
+      pthread_mutex_unlock(&mmvm_lock);
       return -1;
+    }
   }
-
+  pthread_mutex_unlock(&kmm_lock);
+  pthread_mutex_unlock(&mmvm_lock);
   return 0;
 }
 
@@ -1525,7 +1556,7 @@ int __read_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, 
   if (caller == NULL || caller->krnl == NULL || caller->krnl->mm == NULL || data == NULL)
     return -1;
 
-  pthread_mutex_lock(&kmm_lock);
+  
   struct mm_struct *kmm = caller->krnl->mm;
   struct vm_rg_struct *region = get_symrg_byid(kmm, rgid);
   struct vm_area_struct *vma = get_vma_by_num(kmm, vmaid);
@@ -1535,13 +1566,13 @@ int __read_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, 
       (region->rg_start == 0 && region->rg_end == 0) ||
       region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
   {
-    pthread_mutex_unlock(&kmm_lock);
+  
     return -1;
   }
 
   // B3: Doc byte tu Kernel page table
   int ret = pg_getval(kmm, (addr_t)(region->rg_start + offset), data, caller);
-  pthread_mutex_unlock(&kmm_lock);
+  
   return ret;
 }
 
@@ -1561,7 +1592,7 @@ int __write_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset,
   if (caller == NULL || caller->krnl == NULL || caller->krnl->mm == NULL)
     return -1;
 
-  pthread_mutex_lock(&kmm_lock);
+  
   struct mm_struct *kmm = caller->krnl->mm;
   struct vm_rg_struct *region = get_symrg_byid(kmm, rgid);
   struct vm_area_struct *vma = get_vma_by_num(kmm, vmaid);
@@ -1571,13 +1602,13 @@ int __write_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset,
       (region->rg_start == 0 && region->rg_end == 0) ||
       region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
   {
-    pthread_mutex_unlock(&kmm_lock);
+    
     return -1;
   }
 
   // B3: Ghi byte vao Kernel page table
   int ret = pg_setval(kmm, (addr_t)(region->rg_start + offset), value, caller);
-  pthread_mutex_unlock(&kmm_lock);
+  
   return ret;
 }
 
@@ -1598,7 +1629,6 @@ int __read_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BY
   if (caller == NULL || caller->mm == NULL || data == NULL)
     return -1;
 
-  pthread_mutex_lock(&mmvm_lock);
   struct vm_rg_struct *region = get_symrg_byid(caller->mm, rgid);
   struct vm_area_struct *vma = get_vma_by_num(caller->mm, vmaid);
 
@@ -1607,13 +1637,13 @@ int __read_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BY
       (region->rg_start == 0 && region->rg_end == 0) ||
       region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
   {
-    pthread_mutex_unlock(&mmvm_lock);
+    
     return -1;
   }
 
   // B3: Doc byte tu User page table
   int ret = pg_getval(caller->mm, (addr_t)(region->rg_start + offset), data, caller);
-  pthread_mutex_unlock(&mmvm_lock);
+  
   return ret;
 }
 
@@ -1634,7 +1664,7 @@ int __write_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, B
   if (caller == NULL || caller->mm == NULL)
     return -1;
 
-  pthread_mutex_lock(&mmvm_lock);
+  
   struct vm_rg_struct *region = get_symrg_byid(caller->mm, rgid);
   struct vm_area_struct *vma = get_vma_by_num(caller->mm, vmaid);
 
@@ -1643,13 +1673,13 @@ int __write_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, B
       (region->rg_start == 0 && region->rg_end == 0) ||
       region->rg_start >= region->rg_end || offset >= region->rg_end - region->rg_start)
   {
-    pthread_mutex_unlock(&mmvm_lock);
+    
     return -1;
   }
 
   // B3: Ghi byte vao User page table
   int ret = pg_setval(caller->mm, (addr_t)(region->rg_start + offset), value, caller);
-  pthread_mutex_unlock(&mmvm_lock);
+  
   return ret;
 }
 
