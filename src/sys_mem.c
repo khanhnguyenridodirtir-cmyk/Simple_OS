@@ -13,7 +13,9 @@
 #include "libmem.h"
 #include "queue.h"
 #include <stdlib.h>
-
+#include "sched.h"
+extern void libmem_mmvm_lock(void);
+extern void libmem_mmvm_unlock(void);
 #ifdef MM64
 #include "mm64.h"
 #else
@@ -32,17 +34,10 @@ int __sys_memmap(struct krnl_t *krnl, uint32_t pid, struct sc_regs* regs)
     * TODO THIS DUMMY CREATE EMPTY PROC TO AVOID COMPILER NOTIFY 
     *      need to be eliminated
 	*/
-   struct pcb_t *caller = NULL;
-    if (krnl != NULL && krnl->running_list != NULL) {
-    for (int i = 0; i < krnl->running_list->size; i++) {
-    
-        if (krnl->running_list->proc[i] != NULL && krnl->running_list->proc[i]->pid == pid) {
-            caller = krnl->running_list->proc[i];
-            break;
-        }
-    }
-}
-   if (caller == NULL) return -1;
+    struct pcb_t *caller = sched_find_running_pid_in(krnl->running_list, pid);
+    if (caller == NULL)
+        return -1;
+   
 
    /*
     * @bksysnet: Please note in the dual spacing design
@@ -60,7 +55,9 @@ int __sys_memmap(struct krnl_t *krnl, uint32_t pid, struct sc_regs* regs)
    switch (memop) {
    case SYSMEM_MAP_OP:
             /* Reserved process case*/
+			libmem_mmvm_lock();
 			ret = vmap_pgd_memset(caller, regs->a2, regs->a3);
+			libmem_mmvm_unlock();
             break;
    case SYSMEM_INC_OP:
             ret= inc_vma_limit(caller, regs->a2, regs->a3);
