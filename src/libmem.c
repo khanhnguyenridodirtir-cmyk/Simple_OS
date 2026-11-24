@@ -23,13 +23,92 @@
 #include <unistd.h>
 #include <pthread.h>
 #include "queue.h"
+#include "sched.h"
+#include <limits.h>
+
 static pthread_mutex_t mmvm_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t kmm_lock = PTHREAD_MUTEX_INITIALIZER;
+/*Khu vu dinh nghia struct helper*/
+//#define DMADEBUG
+#ifdef MM64
+#define MAXPG PAGING64_MAX_PGN
+#else
+#define MAXPG PAGING_MAX_PGN
+#endif
+
+struct victim_query {
+    struct mm_struct *kernel_mm;
+    addr_t pgn;
+};
+/*Ket thuc khu vu dinh nghia struct helper*/
+
+/*Bat dau khu vu khai bao ham helper*/
+
 // prototype tu che de giai phong bo nho
 int free_pcb_memph(struct pcb_t *caller);
 static int is_rg_dma_busy(uint32_t pid, int rgid);
+static int pg_getpage_locked(struct mm_struct *mm, addr_t pgn, int *fpn,
+                             struct pcb_t *caller);
+static int pg_getval_locked(struct mm_struct *mm, addr_t addr, BYTE *data,
+                            struct pcb_t *caller);
+static int pg_setval_locked(struct mm_struct *mm, addr_t addr, BYTE value,
+                            struct pcb_t *caller);
+int find_victim_page_locked(struct mm_struct *mm, addr_t *retpgn);
 
-#define DMADEBUG
+/* Lock interface for VM entry points implemented in other modules. */
+void libmem_mmvm_lock(void)
+{
+    pthread_mutex_lock(&mmvm_lock);
+}
+
+void libmem_mmvm_unlock(void)
+{
+    pthread_mutex_unlock(&mmvm_lock);
+}
+
+/*Ket thuc khu vuc khai bao ham helper*/
+
+static int running_proc_has_victim(struct pcb_t *proc, void *arg)
+{
+    struct victim_query *query = arg;
+
+    if (proc->mm == NULL || proc->mm == query->kernel_mm)
+        return 0;
+
+    return find_victim_page_locked(proc->mm, &query->pgn) == 0;
+}
+
+/* Cac ham tim kiem region va area */
+/*get_symrg_byid - get mem region by region ID
+ *@mm: memory region
+ *@rgid: region ID act as symbol index of variable
+ *
+ */
+struct vm_rg_struct *get_symrg_byid(struct mm_struct *mm, int rgid)
+{
+  // B1: Kiem tra page table va chi so symbol
+  if (mm == NULL || rgid < 0 || rgid >= PAGING_MAX_SYMTBL_SZ)
+    return NULL;
+
+  // B2: Tra ve entry tu symbol table
+  return &mm->symrgtbl[rgid];
+}
+
+int find_free_symrg(struct mm_struct *mm)
+{
+    if (mm == NULL)
+        return -1;
+
+    for (int i = 0; i < PAGING_MAX_SYMTBL_SZ; i++) {
+        if (mm->symrgtbl[i].vmaid < 0 &&
+            mm->symrgtbl[i].rg_start == 0 &&
+            mm->symrgtbl[i].rg_end == 0) {
+            return i;
+        }
+    }
+
+    return -1;
+}
 
 /*enlist_vm_freerg_list - add new rg to freerg_list
  *@mm: memory region
@@ -62,38 +141,9 @@ int enlist_vm_freerg_list(struct mm_struct *mm, struct vm_rg_struct *rg_elmt, in
 
   return 0;
 }
-/* Cac ham tim kiem region va area */
-/*get_symrg_byid - get mem region by region ID
- *@mm: memory region
- *@rgid: region ID act as symbol index of variable
- *
- */
 
-struct vm_rg_struct *get_symrg_byid(struct mm_struct *mm, int rgid)
-{
-  // B1: Kiem tra page table va chi so symbol
-  if (mm == NULL || rgid < 0 || rgid >= PAGING_MAX_SYMTBL_SZ)
-    return NULL;
 
-  // B2: Tra ve entry tu symbol table
-  return &mm->symrgtbl[rgid];
-}
 
-int find_free_symrg(struct mm_struct *mm)
-{
-    if (mm == NULL)
-        return -1;
-
-    for (int i = 0; i < PAGING_MAX_SYMTBL_SZ; i++) {
-        if (mm->symrgtbl[i].vmaid < 0 &&
-            mm->symrgtbl[i].rg_start == 0 &&
-            mm->symrgtbl[i].rg_end == 0) {
-            return i;
-        }
-    }
-
-    return -1;
-}
 /*__alloc - allocate a region memory
  *@caller: caller
  *@vmaid: ID vm area to alloc memory region
@@ -176,7 +226,12 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
   regs.a2 = vmaid;
   regs.a3 = size;
   
-  if( _syscall(caller->krnl, caller->pid, 17, &regs) <0 ){
+  /* The syscall handler takes mmvm_lock while extending the VMA. Release
+   * our lock first so that the handler does not recursively lock the mutex. */
+  pthread_mutex_unlock(&mmvm_lock);
+  int syscall_ret = _syscall(caller->krnl, caller->pid, 17, &regs);
+  pthread_mutex_lock(&mmvm_lock);
+  if (syscall_ret < 0) {
     pthread_mutex_unlock(&mmvm_lock);
     return -1;
   }
@@ -370,15 +425,9 @@ int libfree(struct pcb_t *proc, uint32_t reg_index)
 
 
 
-int pg_getpage(struct mm_struct *mm, addr_t pgn, int *fpn,
-               struct pcb_t *caller)
+static int pg_getpage_locked(struct mm_struct *mm, addr_t pgn, int *fpn,
+                             struct pcb_t *caller)
 {
-#ifdef MM64
-    #define MAXPG PAGING64_MAX_PGN
-#else
-    #define MAXPG PAGING_MAX_PGN
-#endif
-
     /* B1: Validate input */
     if (mm == NULL || fpn == NULL || caller == NULL ||
         caller->mm == NULL || caller->krnl == NULL ||
@@ -422,29 +471,24 @@ int pg_getpage(struct mm_struct *mm, addr_t pgn, int *fpn,
         struct pcb_t *vic_proc = caller;
 
         /* Find victim in current process first */
-        if (find_victim_page(mm, &vicpgn) < 0) {
+        if (find_victim_page_locked(mm, &vicpgn) < 0) {
             vic_proc = NULL;
 
             /* Global replacement */
-            if (caller->krnl->running_list != NULL) {
-                for (int i = 0;
-                     i < caller->krnl->running_list->size; i++) {
-                    struct pcb_t *p =
-                        caller->krnl->running_list->proc[i];
+           
+          struct victim_query query = {
+                .kernel_mm = caller->krnl->mm
+              };
 
-                    if (p != NULL && p->mm != NULL &&
-                        p->mm != caller->krnl->mm &&
-                        find_victim_page(p->mm, &vicpgn) == 0) {
-                        vic_proc = p;
-                        break;
-                    }
-                }
-            }
+          vic_proc = sched_find_running_proc_in(caller->krnl->running_list,
+                                                running_proc_has_victim,
+                                                &query);
+          if (vic_proc != NULL)
+              vicpgn = query.pgn;
         }
-
         if (vic_proc == NULL)
-            return -1;
-
+         return -1;
+        
         vicpte = pte_get_entry(vic_proc->mm, vicpgn, vic_proc);
         if (!PAGING_PAGE_PRESENT(vicpte)) {
             enlist_pgn_node(&vic_proc->mm->fifo_pgn, vicpgn);
@@ -527,13 +571,24 @@ int pg_getpage(struct mm_struct *mm, addr_t pgn, int *fpn,
     return 0;
 }
 
+/* Public entry point for callers that do not already hold mmvm_lock. */
+int pg_getpage(struct mm_struct *mm, addr_t pgn, int *fpn,
+               struct pcb_t *caller)
+{
+    libmem_mmvm_lock();
+    int ret = pg_getpage_locked(mm, pgn, fpn, caller);
+    libmem_mmvm_unlock();
+    return ret;
+}
+
 /*pg_getval - read value at given offset
  *@mm: memory region
  *@addr: virtual address to acess
  *@value: value
  *
  */
-int pg_getval(struct mm_struct *mm, addr_t addr, BYTE *data, struct pcb_t *caller)
+static int pg_getval_locked(struct mm_struct *mm, addr_t addr, BYTE *data,
+                            struct pcb_t *caller)
 {
   if (mm == NULL || data == NULL || caller == NULL || caller->krnl == NULL)
     return -1;
@@ -548,7 +603,7 @@ int pg_getval(struct mm_struct *mm, addr_t addr, BYTE *data, struct pcb_t *calle
 #endif
   int fpn;
   // lay frame co trang la pgn
-  if (pg_getpage(mm, pgn, &fpn, caller) != 0)
+  if (pg_getpage_locked(mm, pgn, &fpn, caller) != 0)
     return -1; /* invalid page access */
 
 #ifdef MM64
@@ -576,13 +631,23 @@ int pg_getval(struct mm_struct *mm, addr_t addr, BYTE *data, struct pcb_t *calle
 
 }
 
+int pg_getval(struct mm_struct *mm, addr_t addr, BYTE *data,
+              struct pcb_t *caller)
+{
+  libmem_mmvm_lock();
+  int ret = pg_getval_locked(mm, addr, data, caller);
+  libmem_mmvm_unlock();
+  return ret;
+}
+
 /*pg_setval - write value to given offset
  *@mm: memory region
  *@addr: virtual address to acess
  *@value: value
  *
  */
-int pg_setval(struct mm_struct *mm, addr_t addr, BYTE value, struct pcb_t *caller)
+static int pg_setval_locked(struct mm_struct *mm, addr_t addr, BYTE value,
+                            struct pcb_t *caller)
 {
   //B1 :  Xac dinh input hop le
   if (mm == NULL || caller == NULL || caller->krnl == NULL)
@@ -598,7 +663,7 @@ int pg_setval(struct mm_struct *mm, addr_t addr, BYTE value, struct pcb_t *calle
   int fpn;
 
   /* Get the page to MEMRAM, swap from MEMSWAP if needed */
-  if (pg_getpage(mm, pgn, &fpn, caller) != 0)
+  if (pg_getpage_locked(mm, pgn, &fpn, caller) != 0)
     return -1; /* invalid page access */
 
 #ifdef MM64
@@ -620,6 +685,15 @@ int pg_setval(struct mm_struct *mm, addr_t addr, BYTE value, struct pcb_t *calle
   if (_syscall(caller->krnl, caller->pid, 17, &regs) < 0)
     return -1;
   return 0;
+}
+
+int pg_setval(struct mm_struct *mm, addr_t addr, BYTE value,
+              struct pcb_t *caller)
+{
+  libmem_mmvm_lock();
+  int ret = pg_setval_locked(mm, addr, value, caller);
+  libmem_mmvm_unlock();
+  return ret;
 }
 
 /*__read - read value in region memory
@@ -645,7 +719,7 @@ int __read(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE *data)
     
     return -1;
   }
-  if(pg_getval(caller->mm, currg->rg_start + offset, data, caller)< 0){
+  if(pg_getval_locked(caller->mm, currg->rg_start + offset, data, caller)< 0){
     
     return -1;
   }
@@ -734,7 +808,7 @@ int __write(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE value
     return -1;
   }
 
-  if (pg_setval(caller->mm,
+  if (pg_setval_locked(caller->mm,
               currg->rg_start + offset,
               value,
               caller) < 0)
@@ -970,17 +1044,30 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
 #else
     addr_t page_size = PAGING_PAGESZ;
 #endif
-    addr_t page_count = (size + page_size - 1) / page_size;
-    addr_t aligned_size = page_count * page_size;
+    addr_t page_count;
+    addr_t aligned_size;
     addr_t map_start = kvma->sbrk;
 
-    // B4.1: Kiem tra gioi han page table truoc khi cap frame
-    if (map_start % page_size != 0 ||
-        map_start / page_size + page_count > MAXPG)
-    {
-      
+    if (page_size == 0 || size > (addr_t)-1 - (page_size - 1))
       return -1;
-    }
+
+    page_count = size / page_size;
+  if (size % page_size != 0)
+      page_count++;
+
+  if (page_count == 0 || page_count > (addr_t)INT_MAX ||
+      page_count > (addr_t)-1 / page_size)
+      return -1;
+
+    aligned_size = page_count * page_size;
+
+    // B4.1: Kiem tra gioi han page table truoc khi cap frame
+   addr_t start_pgn = map_start / page_size;
+
+    if (map_start % page_size != 0 ||
+      start_pgn >= MAXPG ||
+      page_count > MAXPG - start_pgn)
+        return -1;
 
     // B4.2: Map Kernel pages vao RAM; ham nay khong dung SWAP/FIFO
     struct vm_rg_struct *newrg = malloc(sizeof(struct vm_rg_struct));
@@ -1000,12 +1087,11 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
 
     // B4.3: Cap nhat break va danh sach vung trong cua Kernel VMA
     
-    kvma->sbrk += aligned_size;
-    kvma->vm_end = kvma->sbrk;
+    
     newrg->rg_next = NULL;
     if (enlist_vm_rg_node(&kvma->vm_freerg_list, newrg) < 0)
     {
-      
+      free(newrg);
       return -1;
     }
 
@@ -1015,8 +1101,10 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
       
       return -1;
     }
+     kvma->sbrk += aligned_size;
+     kvma->vm_end = kvma->sbrk;
   }
-
+ 
   // B6: Luu vung da cap vao Kernel symbol table va tra dia chi ao
   symrg->vmaid = vmaid;
   symrg->rg_start = alloc_rg.rg_start;
@@ -1244,7 +1332,7 @@ static int dma_xlat(struct pcb_t *caller, addr_t vaddr, uint64_t *phyaddr)
   addr_t pgn = vaddr / PAGING64_PAGESZ;
   addr_t off = vaddr % PAGING64_PAGESZ;
 
-  if (pg_getpage(caller->mm, (addr_t) pgn, &fpn, caller) != 0)
+  if (pg_getpage_locked(caller->mm, (addr_t) pgn, &fpn, caller) != 0)
     return -1;                       /* trang khong hop le */
 
   *phyaddr = (uint64_t) fpn * PAGING64_PAGESZ + off;
@@ -1289,23 +1377,12 @@ int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t
   }
 
   /* --- 1b. Kiem tra region da cap phat va [offset, offset+size) hop le --- */
-  if (sourceRegion->rg_end <= sourceRegion->rg_start ||
-      (addr_t)offset + size > sourceRegion->rg_end - sourceRegion->rg_start) {
+  if (validate_mem_region(caller->mm, sourceRegion->vmaid,
+                        sourcergid, offset, size) < 0 ||
+      validate_mem_region(caller->mm, destinyRegion->vmaid,
+                        destinationrgid, offset, size) < 0) {
 #ifdef DMADEBUG
-    printf("libmem_dma_memcpy: PID %u reg%u (rg%d) chua cap phat hoac copy vuot bien [%lu,%lu)\n",
-           caller->pid, src, sourcergid,
-           (unsigned long)sourceRegion->rg_start, (unsigned long)sourceRegion->rg_end);
-#endif
-    pthread_mutex_unlock(&mmvm_lock);
-    return -1;
-  }
-
-  if (destinyRegion->rg_end <= destinyRegion->rg_start ||
-      (addr_t)offset + size > destinyRegion->rg_end - destinyRegion->rg_start) {
-#ifdef DMADEBUG
-    printf("libmem_dma_memcpy: PID %u reg%u (rg%d) chua cap phat hoac copy vuot bien [%lu,%lu)\n",
-           caller->pid, dst, destinationrgid,
-           (unsigned long)destinyRegion->rg_start, (unsigned long)destinyRegion->rg_end);
+    printf("libmem_dma_memcpy: vung source hoac destination chua cap phat");
 #endif
     pthread_mutex_unlock(&mmvm_lock);
     return -1;
@@ -1500,9 +1577,9 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
     BYTE data;
 
     if (__read_user_mem(caller, user_vmaid,
-                        (int)source, offset + i, &data) < 0 ||
+                        (int)source, (addr_t)offset + i, &data) < 0 ||
         __write_kernel_mem(caller, kernel_vmaid,
-                           (int)destination, offset + i, data) < 0){
+                           (int)destination, (addr_t)offset + i, data) < 0){
       pthread_mutex_unlock(&mmvm_lock);
       pthread_mutex_unlock(&kmm_lock);
       return -1;
@@ -1568,9 +1645,9 @@ int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destina
     BYTE data;
 
     if (__read_kernel_mem(caller, kernel_vmaid,
-                          (int)source, offset + i, &data) < 0 ||
+                          (int)source, (addr_t)offset + i, &data) < 0 ||
         __write_user_mem(caller, user_vmaid,
-                         (int)destination, offset + i, data) < 0){
+                         (int)destination, (addr_t)offset + i, data) < 0){
       pthread_mutex_unlock(&mmvm_lock);
       pthread_mutex_unlock(&kmm_lock);
       return -1;
@@ -1613,7 +1690,7 @@ int __read_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, 
   }
 
   // B3: Doc byte tu Kernel page table
-  int ret = pg_getval(kmm, (addr_t)(region->rg_start + offset), data, caller);
+  int ret = pg_getval_locked(kmm, (addr_t)(region->rg_start + offset), data, caller);
   
   return ret;
 }
@@ -1649,7 +1726,7 @@ int __write_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset,
   }
 
   // B3: Ghi byte vao Kernel page table
-  int ret = pg_setval(kmm, (addr_t)(region->rg_start + offset), value, caller);
+  int ret = pg_setval_locked(kmm, (addr_t)(region->rg_start + offset), value, caller);
   
   return ret;
 }
@@ -1684,7 +1761,7 @@ int __read_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BY
   }
 
   // B3: Doc byte tu User page table
-  int ret = pg_getval(caller->mm, (addr_t)(region->rg_start + offset), data, caller);
+  int ret = pg_getval_locked(caller->mm, (addr_t)(region->rg_start + offset), data, caller);
   
   return ret;
 }
@@ -1720,7 +1797,7 @@ int __write_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, B
   }
 
   // B3: Ghi byte vao User page table
-  int ret = pg_setval(caller->mm, (addr_t)(region->rg_start + offset), value, caller);
+  int ret = pg_setval_locked(caller->mm, (addr_t)(region->rg_start + offset), value, caller);
   
   return ret;
 }
@@ -1847,7 +1924,7 @@ int free_pcb_memph(struct pcb_t *caller)
  *@pgn: return page number
  *
  */
-int find_victim_page(struct mm_struct *mm, addr_t *retpgn)
+int find_victim_page_locked(struct mm_struct *mm, addr_t *retpgn)
 {
   // B1 : Kiem tra dau vao va danh sach fifo_pgn
   if (mm == NULL || retpgn == NULL || mm->fifo_pgn == NULL)
@@ -1895,6 +1972,15 @@ int find_victim_page(struct mm_struct *mm, addr_t *retpgn)
   return 0;
 }
 
+/* Safe public entry point for callers outside the locked VM paths. */
+int find_victim_page(struct mm_struct *mm, addr_t *retpgn)
+{
+  libmem_mmvm_lock();
+  int ret = find_victim_page_locked(mm, retpgn);
+  libmem_mmvm_unlock();
+  return ret;
+}
+
 /*get_free_vmrg_area - get a free vm region
  *@caller: caller
  *@vmaid: ID vm area to alloc memory region
@@ -1907,7 +1993,7 @@ int find_victim_page(struct mm_struct *mm, addr_t *retpgn)
 int get_free_vmrg_area(struct pcb_t *caller, int vmaid, uint64_t size, struct vm_rg_struct *newrg)
 {
   // B1 : xac nhan input
-  if(caller==NULL || caller->mm ==NULL){
+  if(caller==NULL || caller->mm ==NULL||newrg==NULL||size==0){
     return -1;
 
   }
@@ -1927,7 +2013,8 @@ int get_free_vmrg_area(struct pcb_t *caller, int vmaid, uint64_t size, struct vm
   /* Traverse on list of free vm region to find a fit space */
   while (rgit != NULL)
   {
-    if (rgit->rg_start + size <= rgit->rg_end)
+    if (rgit->rg_start <= rgit->rg_end &&
+    size <= rgit->rg_end - rgit->rg_start)
     { /* Current region has enough space */
       // Lay 
       newrg->rg_start = rgit->rg_start;
