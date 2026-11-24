@@ -513,12 +513,14 @@ addr_t vm_map_ram(struct pcb_t *caller, addr_t astart, addr_t aend, addr_t mapst
     /* Tra lai cac khung da cap phat do dang (neu co) truoc khi bao loi */
     while (frm_lst != NULL)
     {
-      struct framephy_struct *tmp = frm_lst;
-      if (tmp->fpn & PENDING_SWP_FLAG) {
+    struct framephy_struct *tmp = frm_lst;
+     if (tmp->fpn == (addr_t)-1) {
+        /* Khong tra frame nao vi RAM < 4KB */
+      } else if (tmp->fpn & PENDING_SWP_FLAG) {
         /* Tra lai cho SWAP neu khung nay dang nam tren SWAP */
         addr_t swpfpn = tmp->fpn & ~PENDING_SWP_FLAG;
         MEMPHY_put_freefp(caller->krnl->active_mswp, swpfpn);
-      } else if (tmp->fpn != (addr_t)-1) {
+      } else {
         /* Tra lai cho RAM neu day la khung RAM binh thuong */
         MEMPHY_put_freefp(caller->krnl->mram, tmp->fpn);
       }
