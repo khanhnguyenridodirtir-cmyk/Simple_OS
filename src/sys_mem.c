@@ -9,7 +9,7 @@
  */
 
 #include "os-mm.h"
-#include "syscall.h"
+#include "../include/syscall.h"
 #include "libmem.h"
 #include "queue.h"
 #include <stdlib.h>
@@ -67,9 +67,9 @@ int __sys_memmap(struct krnl_t *krnl, uint32_t pid, struct sc_regs* regs)
             break;
    case SYSMEM_SWP_OP:
             if (regs->a4 == 0)
-                __mm_swap_page(caller, regs->a2, regs->a3); // RAM -> SWAP
+                ret=__mm_swap_page(caller, regs->a2, regs->a3); // RAM -> SWAP
             else
-                __swap_cp_page(krnl->active_mswp, regs->a3, krnl->mram, regs->a2); // SWAP -> RAM
+                ret=__swap_cp_page(krnl->active_mswp, regs->a3, krnl->mram, regs->a2); // SWAP -> RAM
             break;
    case SYSMEM_IO_READ:
             ret= MEMPHY_read(krnl->mram, regs->a2, &value);
