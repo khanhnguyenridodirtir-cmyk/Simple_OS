@@ -42,6 +42,57 @@ pthread_mutex_lock(&queue_lock);
 	pthread_mutex_unlock(&queue_lock);
 	return res;
 }
+//HELLPER PHU TIM PROCESS DANG CHAY
+struct pcb_t *sched_find_running_pid(uint32_t pid)
+{
+    return sched_find_running_pid_in(&running_list, pid);
+}
+struct pcb_t *sched_find_running_proc(sched_running_match_t match, void *arg)
+{
+    return sched_find_running_proc_in(&running_list, match, arg);
+}
+
+struct pcb_t *sched_find_running_pid_in(struct queue_t *list, uint32_t pid)
+{
+    struct pcb_t *found = NULL;
+
+    if (list == NULL)
+        return NULL;
+
+    pthread_mutex_lock(&queue_lock);
+    for (int i = 0; i < list->size; i++) {
+        struct pcb_t *p = list->proc[i];
+        if (p != NULL && p->pid == pid) {
+            found = p;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&queue_lock);
+    return found;
+}
+
+struct pcb_t *sched_find_running_proc_in(struct queue_t *list,
+                                        sched_running_match_t match,
+                                        void *arg)
+{
+    struct pcb_t *found = NULL;
+
+    if (list == NULL || match == NULL)
+        return NULL;
+
+    pthread_mutex_lock(&queue_lock);
+    for (int i = 0; i < list->size; i++) {
+        struct pcb_t *proc = list->proc[i];
+        if (proc != NULL && match(proc, arg)) {
+            found = proc;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&queue_lock);
+
+    return found;
+}
+// KET THUC PHAN HELLPER
 
 void init_scheduler(void) {
 #ifdef MLQ_SCHED
