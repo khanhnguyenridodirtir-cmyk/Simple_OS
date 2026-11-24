@@ -1,7 +1,7 @@
 #include "test_helpers.h"
 #include "libmem.h"
 #include "queue.h"
-#include "syscall.h"
+#include "../include/syscall.h"
 
 #include <pthread.h>
 #include <stdlib.h>
@@ -11,6 +11,7 @@
 int libsyscall(struct pcb_t *caller, uint32_t syscall_idx, arg_t a1, arg_t a2, arg_t a3);
 int __sys_memmap(struct krnl_t *krnl, uint32_t pid, struct sc_regs *regs);
 int free_pcb_memph(struct pcb_t *caller);
+void mm_free_page_tables(struct mm_struct *mm);
 
 /*
  * Dinh nghia bang syscall that (khop voi syscall.tbl cua he thong)
@@ -82,11 +83,9 @@ static void sc17_cleanup_mm(struct mm_struct *mm)
         free(vtmp);
     }
 
-    free(mm->pgd);
-    free(mm->p4d);
-    free(mm->pud);
-    free(mm->pmd);
-    free(mm->pt);
+    /* Giai phong toan bo cay bang trang 5 cap cap phat dong */
+    mm_free_page_tables(mm);
+    mm->pgd = NULL;
 }
 
 static void sc17_env_init(struct sc17_test_env *env, int ram_frames, int swp_frames)
@@ -135,6 +134,7 @@ static void sc17_env_destroy(struct sc17_test_env *env)
 }
 
 /* SC17-01: Goi syscall 17 voi SYSMEM_MAP_OP (ca truc tiep lan qua libsyscall) */
+/* SC17-01: Goi syscall 17 voi SYSMEM_MAP_OP (ca truc tiep lan qua libsyscall) */
 static void run_sc17_01(void)
 {
     struct sc17_test_env env;
@@ -150,17 +150,18 @@ static void run_sc17_01(void)
     regs.a2 = 0;
     regs.a3 = 2;
     TEST_ASSERT_EQ(0, __sys_memmap(&env.krnl, proc.pid, &regs));
-    TEST_ASSERT_EQ(0xdeadbeefULL, mm.pt[0]);
-    TEST_ASSERT_EQ(0xdeadbeefULL, mm.pt[1]);
+    TEST_ASSERT_EQ(0xdeadbeefULL, pte_get_entry(&mm, 0, &proc));
+    TEST_ASSERT_EQ(0xdeadbeefULL, pte_get_entry(&mm, 1, &proc));
 
     /* Tang 2: Goi qua giao dien libsyscall(proc, 17, ...) */
     addr_t addr2 = 4ULL * PAGING64_PAGESZ;
     TEST_ASSERT_EQ(0, libsyscall(&proc, 17, SYSMEM_MAP_OP, addr2, 2));
-    TEST_ASSERT_EQ(0xdeadbeefULL, mm.pt[4]);
-    TEST_ASSERT_EQ(0xdeadbeefULL, mm.pt[5]);
+    TEST_ASSERT_EQ(0xdeadbeefULL, pte_get_entry(&mm, 4, &proc));
+    TEST_ASSERT_EQ(0xdeadbeefULL, pte_get_entry(&mm, 5, &proc));
 
-    /* Xoa dau danh dau thu cong truoc khi free_pcb_memph */
-    mm.pt[0] = mm.pt[1] = mm.pt[4] = mm.pt[5] = 0;
+    /* Giai phong cay bang trang truoc khi free_pcb_memph vi 0xdeadbeef khong phai FPN that */
+    mm_free_page_tables(&mm);
+    mm.pgd = NULL;
     sc17_proc_destroy(&proc, &mm);
     sc17_env_destroy(&env);
 }
