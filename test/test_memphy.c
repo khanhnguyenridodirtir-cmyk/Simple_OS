@@ -52,11 +52,14 @@ static void run_mp03(void)
 static void run_mp04(void)
 {
     struct memphy_struct mp;
-    /* A nonzero capacity smaller than one 4-KiB page cannot form a frame. */
+    /* Sub-page RAM is valid storage, but it contains zero allocatable frames. */
     int ret = test_memphy_init(&mp,
                                (addr_t)(test_memphy_page_size() - 1), 1);
-    TEST_ASSERT_EQ(-1, ret);
-    TEST_ASSERT(mp.storage == NULL);
+    TEST_ASSERT_EQ(0, ret);
+    TEST_ASSERT(mp.storage != NULL);
+    TEST_ASSERT(mp.free_fp_list == NULL);
+    addr_t fpn = (addr_t)-1;
+    TEST_ASSERT_EQ(-1, MEMPHY_get_freefp(&mp, &fpn));
     verify_memphy_invariants(&mp, 0);
     test_memphy_destroy(&mp, ret == 0);
 }
