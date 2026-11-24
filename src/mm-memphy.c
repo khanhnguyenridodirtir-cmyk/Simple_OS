@@ -167,9 +167,14 @@ int MEMPHY_format(struct memphy_struct *mp, int pagesz)
    struct framephy_struct *newfst, *fst;
    int iter = 0;
 
-   if (numfp <= 0){
-         return -1;
-   }
+  if (mp->maxsz < 0 || numfp < 0)
+    return -1;
+
+if (numfp == 0) {
+    mp->free_fp_list = NULL;
+    mp->used_fp_list = NULL;
+    return 0;
+}
    // Khoi tao danh sach cac trang nho vat ly 
    /* Init head of free framephy list */
    fst = malloc(sizeof(struct framephy_struct));
