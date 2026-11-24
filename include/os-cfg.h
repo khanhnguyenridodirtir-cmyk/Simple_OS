@@ -19,7 +19,7 @@
 #define VMDBG 1         // Bo comment : Virtual Memmory debug
 #define MMDBG 1         // Managment Memmory Debug.
 //#define IODUMP 1
-//#define PAGETBL_DUMP 1
+#define PAGETBL_DUMP 1
 //#define MAINDEBUGCONFIG 1 // flag config tai os.c
 /* 
  * @bksysnet:

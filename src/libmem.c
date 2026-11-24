@@ -110,6 +110,29 @@ int find_free_symrg(struct mm_struct *mm)
     return -1;
 }
 
+// Helper nay tim symrg theo dia chi cap tu thanh ghi
+struct vm_rg_struct *get_symrg_byaddr(
+    struct mm_struct *mm,
+    addr_t addr,
+    int *rgid
+) {
+    if (mm == NULL || rgid == NULL)
+        return NULL;
+    
+    for (int i = 0; i < PAGING_MAX_SYMTBL_SZ; i++) {
+        struct vm_rg_struct *rg = &mm->symrgtbl[i];
+
+        if (rg->vmaid >= 0 &&
+            rg->rg_start == addr &&
+            rg->rg_end > rg->rg_start) {
+            *rgid = i;
+            return rg;
+        }
+      }
+   
+    return NULL;
+}
+
 /*enlist_vm_freerg_list - add new rg to freerg_list
  *@mm: memory region
  *@rg_elmt: new region
@@ -153,27 +176,7 @@ int enlist_vm_freerg_list(struct mm_struct *mm, struct vm_rg_struct *rg_elmt, in
  *
  */
 
-struct vm_rg_struct *get_symrg_byaddr(
-    struct mm_struct *mm,
-    addr_t addr,
-    int *rgid
-) {
-    if (mm == NULL || rgid == NULL)
-        return NULL;
-    
-    for (int i = 0; i < PAGING_MAX_SYMTBL_SZ; i++) {
-        struct vm_rg_struct *rg = &mm->symrgtbl[i];
 
-        if (rg->vmaid >= 0 &&
-            rg->rg_start == addr &&
-            rg->rg_end > rg->rg_start) {
-            *rgid = i;
-            return rg;
-        }
-      }
-   
-    return NULL;
-}
 int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *alloc_addr)
 {
   /*Allocate at the toproof */
@@ -236,9 +239,6 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
     return -1;
   }
 
-  /* TODO INCREASE THE LIMIT
-   * SYSCALL 1 sys_memmap
-   */
   
   /*Successful increase limit */
   if (get_free_vmrg_area(caller, vmaid, size, &rgnode) == 0) {
@@ -272,7 +272,6 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
      return -1;
    }
 
-   
 
    /* TODO: Manage the collect freed region to freerg_list */
 
@@ -285,12 +284,11 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
      return -1;
    }
 
-   // enlist_vm_freerg_list hien tai chi quan ly VMA dau tien
   
    struct vm_rg_struct *rgnode =
        get_symrg_byid(caller->mm, rgid);
 
-     if (rgnode == NULL ||
+  if (rgnode == NULL ||
     rgnode->vmaid != vmaid || 
     rgnode->vmaid < 0||
     rgnode->rg_start >= rgnode->rg_end) {
@@ -307,19 +305,20 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
      return -1;
    }
 
-   // B3 :
+   // B3 : Gan thong so khoi tao cho region moi va gan cai region do vao free list
    freerg_node->vmaid = vmaid;
    freerg_node->rg_start = rgnode->rg_start;
    freerg_node->rg_end = rgnode->rg_end;
    freerg_node->rg_next = NULL;
 
    /*enlist the obsoleted memory region */
+   // B3.1 Neu ma gan dc thi di tiep ko thi ta dua moi thu ve ban dau free cai region moi tao
    if (enlist_vm_freerg_list(caller->mm, freerg_node,vmaid) < 0) {
      free(freerg_node);
      return -1;
    }
 
-   // B3: Reset symbol table entry
+   // B3.2: Dua gia tri cua region nay trong region table ve lai gia tri goc
    rgnode->rg_start = 0;
    rgnode->rg_end = 0;
    rgnode->vmaid = -1;
@@ -339,7 +338,7 @@ int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
   
   int vmaid = select_vmaid(size);
 
-  
+
 
   int val = __alloc(proc, vmaid, -1, size, &addr);
  
@@ -354,11 +353,11 @@ int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
     MEMPHY_dump(proc->krnl->mram);
   printf("[ALLOC] PID=%d reg=%d -> rg_start=%lu, rg_end=%lu\n",
          proc->pid, reg_index, (unsigned long)addr, (unsigned long)(addr + size));
+
+#endif
 #ifdef PAGETBL_DUMP
     print_pgtbl(proc, 0, -1); // print max TBL
 #endif
-#endif
-
   /* By default using vmaid = 0 */
   return val;
 }
@@ -774,9 +773,10 @@ int libread(
 #ifdef IODUMP
   /* TODO dump IO content (if needed) */
   printf("[VERIFY READ] PID=%d reg=%d offset=%ld -> val=%d\n", proc->pid, source, offset, data);
+
+#endif
   #ifdef PAGETBL_DUMP
   print_pgtbl(proc, 0, -1); // print max TBL
-#endif
 #endif
   pthread_mutex_unlock(&mmvm_lock);
   return val;
@@ -866,9 +866,9 @@ int libwrite(
 #ifdef IODUMP
   /* TODO dump IO content (if needed) */
   printf("[VERIFY Write] PID=%d reg=%d offset=%ld -> val=%d\n", proc->pid, destination, offset, data);
+#endif
 #ifdef PAGETBL_DUMP
   print_pgtbl(proc, 0, -1); // print max TBL
-#endif
 #endif
   pthread_mutex_unlock(&mmvm_lock);
   return val;
@@ -1987,6 +1987,8 @@ int find_victim_page(struct mm_struct *mm, addr_t *retpgn)
  *@size: allocated size
  *
  */
+// Ghi chu : don gian khi lay thi ta chi lay thong tin, lay xong ma cai khoi region do ma het vi xoa khoi free_list
+// Nguoc lai voi neu ma tra ve free_list thi tao cai moi.
 // Yeu cau lay 1 vung (region) co kich thuoc size thuoc area co id la vmaid gan no vao newrg
 // Neu duoc tra ve 0
 // else ve -1 
@@ -2026,7 +2028,8 @@ int get_free_vmrg_area(struct pcb_t *caller, int vmaid, uint64_t size, struct vm
         rgit->rg_start = rgit->rg_start + size;
       }
       else
-      { /*Use up all space, remove current node */
+      { 
+        /*Use up all space, remove current node */
         /*Clone next rg node */
         // Th2 lay vua dung thi xoa khoi free list cai region do
         struct vm_rg_struct *nextrg = rgit->rg_next;

@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include "timer.h"
 // Nho comment neu ko debug
-#define SCHED_DBG 1
+//#define SCHED_DBG 1
 
 static struct queue_t ready_queue;
 static struct queue_t run_queue;
