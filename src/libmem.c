@@ -22,7 +22,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <pthread.h>
-
+#include "queue.h"
 static pthread_mutex_t mmvm_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t kmm_lock = PTHREAD_MUTEX_INITIALIZER;
 // prototype tu che de giai phong bo nho
@@ -420,33 +420,52 @@ int pg_getpage(struct mm_struct *mm, addr_t pgn, int *fpn, struct pcb_t *caller)
   addr_t tgtfpn; // Khung trang dich se chua du lieu cua trang pgn
 
   /* Buoc 1: Uu tien xin frame trong truc tiep tu RAM truoc */
+ /* Buoc 1: Uu tien xin frame trong truc tiep tu RAM truoc */
   if (MEMPHY_get_freefp(caller->krnl->mram, &tgtfpn) < 0)
   {
-    /* RAM da het frame trong -> Tim trang nan nhan (Victim) theo FIFO */
-    // B5.1: RAM het frame - chon victim theo FIFO cua User MM
+    struct pcb_t *vic_proc = caller;
+
+    /* 1. Tim victim trong chinh tien trinh hien tai */
     if (find_victim_page(mm, &vicpgn) < 0)
+    {
+      /* 2. Neu tien trinh hien tai khong con trang tren RAM, tim o cac tien trinh khac (Global Replacement) */
+      vic_proc = NULL;
+      if (caller->krnl->running_list != NULL)
+      {
+        for (int i = 0; i < caller->krnl->running_list->size; i++)
+        {
+          struct pcb_t *p = caller->krnl->running_list->proc[i];
+          if (p != NULL && p->mm != NULL && p->mm != caller->krnl->mm &&
+              find_victim_page(p->mm, &vicpgn) == 0)
+          {
+            vic_proc = p;
+            break;
+          }
+        }
+      }
+    }
+
+    if (vic_proc == NULL)
       return -1;
 
-    /* Lay so hieu frame vat ly cua trang nan nhan */
-    vicpte = pte_get_entry(mm, vicpgn, caller);
+    /* Lay so hieu frame vat ly cua trang nan nhan tu vic_proc */
+    vicpte = pte_get_entry(vic_proc->mm, vicpgn, vic_proc);
     if (!PAGING_PAGE_PRESENT(vicpte))
     {
-      enlist_pgn_node(&mm->fifo_pgn, vicpgn);
+      enlist_pgn_node(&vic_proc->mm->fifo_pgn, vicpgn);
       return -1;
     }
     vicfpn = PAGING_FPN(vicpte);
 
     /* Xin mot frame trong ben vung nho SWAP */
-    // B5.2: Xin frame SWAP de luu victim
     if (caller->krnl->active_mswp == NULL ||
         MEMPHY_get_freefp(caller->krnl->active_mswp, &swpfpn) < 0)
     {
-      enlist_pgn_node(&mm->fifo_pgn, vicpgn);
+      enlist_pgn_node(&vic_proc->mm->fifo_pgn, vicpgn);
       return -1;
     }
 
-    /* Copy du lieu trang nan nhan tu RAM (vicfpn) sang SWAP (swpfpn) qua syscall 17 */
-    // B5.3: Copy RAM -> SWAP bang syscall 17
+    /* Copy du lieu trang nan nhan tu RAM (vicfpn) sang SWAP (swpfpn) */
     struct sc_regs swap_regs = {0};
     swap_regs.a1 = SYSMEM_SWP_OP;
     swap_regs.a2 = vicfpn;
@@ -455,21 +474,18 @@ int pg_getpage(struct mm_struct *mm, addr_t pgn, int *fpn, struct pcb_t *caller)
     if (_syscall(caller->krnl, caller->pid, 17, &swap_regs) < 0)
     {
       MEMPHY_put_freefp(caller->krnl->active_mswp, swpfpn);
-      enlist_pgn_node(&mm->fifo_pgn, vicpgn);
+      enlist_pgn_node(&vic_proc->mm->fifo_pgn, vicpgn);
       return -1;
     }
 
-    /* Cap nhat bang trang cho nan nhan (danh dau da bi day ra SWAP) */
-    // B5.4: Cap nhat PTE victim thanh trang da swap
-    if (pte_set_swap(caller, vicpgn, 0, swpfpn) < 0)
+    /* Cap nhat bang trang cho dung vic_proc (khong phai caller!) */
+    if (pte_set_swap(vic_proc, vicpgn, 0, swpfpn) < 0)
     {
       MEMPHY_put_freefp(caller->krnl->active_mswp, swpfpn);
-      enlist_pgn_node(&mm->fifo_pgn, vicpgn);
+      enlist_pgn_node(&vic_proc->mm->fifo_pgn, vicpgn);
       return -1;
     }
 
-    /* Chiem lay khung trang RAM cua nan nhan cho trang hien tai */
-    // B5.5: Tai su dung frame RAM cua victim cho trang dich
     tgtfpn = vicfpn;
   }
 
