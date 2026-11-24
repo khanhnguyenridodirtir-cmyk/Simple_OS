@@ -333,7 +333,7 @@ int libfree(struct pcb_t *proc, uint32_t reg_index)
 
     if (reg_index >= MAXREG)
         return -1;
-    ptrhead_mutex_lock(&mmvm_lock);
+    pthread_mutex_lock(&mmvm_lock);
     addr_t addr = proc->regs[reg_index];
 
    
@@ -746,7 +746,7 @@ int __write(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE value
     currg->rg_start >= currg->rg_end ||
     offset >= currg->rg_end - currg->rg_start) /* Invalid memory identify */
   {
-    pthread_mutex_unlock(&mmvm_lock);
+    
     return -1;
   }
 
@@ -755,11 +755,10 @@ int __write(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE value
               value,
               caller) < 0)
   {
-    pthread_mutex_unlock(&mmvm_lock);
+    
     return -1;
   }
 
-  pthread_mutex_unlock(&mmvm_lock);
   return 0;
 }
 
