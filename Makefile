@@ -45,7 +45,7 @@ ifeq ($(shell uname -s),Darwin)
 endif
 export VERILATOR_ROOT
 
-MAKE = $(CC) $(INC)
+CC_CMD = $(CC) $(INC)
 CXX_MAKE = $(CXX) -iquote include -I$(VERILATOR_ROOT)/include -I$(VERILATOR_ROOT)/include/vltstd
 
 # Object files needed by modules
@@ -87,6 +87,7 @@ HEADER = $(wildcard $(INCLUDE)/*.h)
 TEST_TV1_BIN = test_tv1
 TEST_TV1_SRC =  test/test_tv1_full.c $(SRC)/sched.c $(SRC)/queue.c $(SRC)/timer.c
 TEST_TV1_FLAGS = $(INC) -Itest -DMLQ_SCHED -std=gnu11 -Wall $(DEBUG)
+SCHED_SUPPORT_SRC = $(SRC)/sched.c $(SRC)/queue.c $(SRC)/timer.c
 
 all: os
 #mem sched os
@@ -100,14 +101,14 @@ test_mem: $(OBJ) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o
 test_memphy: test/test_memphy.c test/test_helpers.c src/mm-memphy.c test/test_helpers.h
 	$(CC) $(INC) -Itest -std=gnu11 -Wall -Wextra $(DEBUG) test/test_memphy.c test/test_helpers.c src/mm-memphy.c -o $@ $(LIB)
 
-test_mm64: test/test_mm64.c test/test_helpers.c src/mm64.c src/mm-memphy.c src/mm-vm.c src/libmem.c src/syscall.c src/sys_mem.c src/sys_listsyscall.c
+test_mm64: test/test_mm64.c test/test_helpers.c src/mm64.c src/mm-memphy.c src/mm-vm.c src/libmem.c src/syscall.c src/sys_mem.c src/sys_listsyscall.c $(SCHED_SUPPORT_SRC)
 	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
 
-test_libmem: test/test_libmem.c test/test_helpers.c src/libmem.c src/mm64.c src/mm-memphy.c src/sys_mem.c src/mm-vm.c 
+test_libmem: test/test_libmem.c test/test_helpers.c src/libmem.c src/mm64.c src/mm-memphy.c src/sys_mem.c src/mm-vm.c $(SCHED_SUPPORT_SRC)
 	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
-test_syscall17: test/test_syscall17.c test/test_helpers.c src/sys_mem.c src/libstd.c src/libmem.c src/mm64.c src/mm-memphy.c src/mm-vm.c
+test_syscall17: test/test_syscall17.c test/test_helpers.c src/sys_mem.c src/libstd.c src/libmem.c src/mm64.c src/mm-memphy.c src/mm-vm.c $(SCHED_SUPPORT_SRC)
 	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
-test_integration_mem: test/test_integration_mem.c test/test_helpers.c src/sys_mem.c src/libstd.c src/libmem.c src/mm64.c src/mm-memphy.c src/mm-vm.c
+test_integration_mem: test/test_integration_mem.c test/test_helpers.c src/sys_mem.c src/libstd.c src/libmem.c src/mm64.c src/mm-memphy.c src/mm-vm.c $(SCHED_SUPPORT_SRC)
 	$(CC) $(INC) -Itest -std=gnu11 -Wall $(DEBUG) $^ -o $@ $(LIB)
 
 
@@ -116,11 +117,11 @@ test_all: test_memphy test_mm64 test_libmem test_syscall17 test_integration_mem
 	
 # Just compile memory management modules
 mem: $(MEM_OBJ)
-	$(MAKE) $(LFLAGS) $(MEM_OBJ) -o mem $(LIB)
+	$(CC) $(LFLAGS) $(MEM_OBJ) -o mem $(LIB)
 
 # Just compile scheduler
 sched: $(SCHED_OBJ)
-	$(MAKE) $(LFLAGS) $(MEM_OBJ) -o sched $(LIB)
+	$(CC) $(LFLAGS) $(SCHED_OBJ) -o sched $(LIB)
 
 # Compile DMA testbench with C 
 # define DMA_MAIN=1 in src/dma_c_testbench.cpp to enable main()
@@ -132,18 +133,18 @@ $(OBJ)/dma_c_testbench_dma.o: src/dma_c_testbench.cpp ${HEADER} $(OBJ)
 	$(CXX_MAKE) $(CXXFLAGS) -DDEBUG_ENABLED=1 -DDMA_MAIN=1 $< -o $@
 
 # Compile syscall
-syscalltbl.lst: $(SRC)/syscall.tbl
+$(SRC)/syscalltbl.lst: $(SRC)/syscall.tbl $(SRC)/syscalltbl.sh
 	@echo $(OS_OBJ)
 	chmod +x $(SRC)/syscalltbl.sh
-	$(SRC)/syscalltbl.sh $< $(SRC)/$@
+	$(SRC)/syscalltbl.sh $< $@
 #	mv $(OBJ)/syscalltbl.lst $(INCLUDE)/
 
 # Compile the whole OS simulation
-os: $(OBJ) syscalltbl.lst $(OS_OBJ)
+os: $(OBJ) $(SRC)/syscalltbl.lst $(OS_OBJ)
 	$(CXX) $(LFLAGS) $(OS_OBJ) -o os $(LIB) -lpthread
 
 $(OBJ)/%.o: %.c ${HEADER} $(OBJ)
-	$(MAKE) $(CFLAGS) $< -o $@
+	$(CC_CMD) $(CFLAGS) $< -o $@
 
 $(OBJ)/%.o: %.cpp ${HEADER} $(OBJ)
 	$(CXX_MAKE) $(CXXFLAGS) -DDEBUG_ENABLED=1 $< -o $@
