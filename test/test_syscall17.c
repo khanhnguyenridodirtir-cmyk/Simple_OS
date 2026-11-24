@@ -11,7 +11,6 @@
 int libsyscall(struct pcb_t *caller, uint32_t syscall_idx, arg_t a1, arg_t a2, arg_t a3);
 int __sys_memmap(struct krnl_t *krnl, uint32_t pid, struct sc_regs *regs);
 int free_pcb_memph(struct pcb_t *caller);
-void mm_free_page_tables(struct mm_struct *mm);
 
 /*
  * Dinh nghia bang syscall that (khop voi syscall.tbl cua he thong)

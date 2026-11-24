@@ -27,6 +27,7 @@ static pthread_mutex_t mmvm_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t kmm_lock = PTHREAD_MUTEX_INITIALIZER;
 // prototype tu che de giai phong bo nho
 int free_pcb_memph(struct pcb_t *caller);
+static int is_rg_dma_busy(uint32_t pid, int rgid);
 
 #define DMADEBUG
 
@@ -342,7 +343,7 @@ int libfree(struct pcb_t *proc, uint32_t reg_index)
     struct vm_rg_struct *rgnode =
         get_symrg_byaddr(proc->mm, addr, &rgid);
 
-    if (rgnode == NULL){
+    if (rgnode == NULL ||is_rg_dma_busy(proc->pid, rgid) ){
         pthread_mutex_unlock(&mmvm_lock);
         return -1;
     }
@@ -434,6 +435,7 @@ int pg_getpage(struct mm_struct *mm, addr_t pgn, int *fpn, struct pcb_t *caller)
      
       if (caller->krnl->running_list != NULL)
       {
+        
         for (int i = 0; i < caller->krnl->running_list->size; i++)
         {
           struct pcb_t *p = caller->krnl->running_list->proc[i];
@@ -1126,7 +1128,23 @@ int libmem_dma_inflight(uint32_t pid)
   pthread_mutex_unlock(&dma_job_lock);
   return n;
 }
-
+/* [SYNC-DMA] Kiem tra mot rgid cu the cua pid co dang nam trong hang doi DMA khong */
+static int is_rg_dma_busy(uint32_t pid, int rgid)
+{
+  if (rgid < 0) return 0;
+  int busy = 0;
+  pthread_mutex_lock(&dma_job_lock);
+  for (int i = 0; i < dma_job_count; i++) {
+    struct dma_job *j = &dma_jobs[(dma_job_head + i) % DMA_JOB_MAX];
+    if (j->pid == pid &&
+        ((uint32_t)rgid == j->src_rg || (uint32_t)rgid == j->dst_rg)) {
+      busy = 1;
+      break;
+    }
+  }
+  pthread_mutex_unlock(&dma_job_lock);
+  return busy;
+}
 /* lenh sap chay co dung vao region dang co DMA khong?
  *   rd = region lenh se doc, wr = region lenh se ghi/free (-1 = khong co) */
 static int dma_conflict(uint32_t pid, int rd, int wr)
@@ -1325,15 +1343,44 @@ int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t
       return -1;
     }
 
-    /* [SUA 3] Tach chunk thanh phan chan 4 byte (aligned_len) va phan duoi le 1..3 byte (odd_bytes).
-     * Khong dung DMA_LEN_ROUNDUP(chunk) vi phan cung DMA truyen theo beat 32-bit se ghi de 1..3 byte
-     * sang vung nho lien ke trong RAM neu chunk khong chia het cho 4. */
-    uint32_t aligned_len = chunk & ~3U;
-    uint32_t odd_bytes = chunk & 3U;
+    /* [SUA 3] Phan cung RTL yeu cau source, destination va length deu chia het cho 4.
+     * - Neu sphy va dphy cung do lech mod 4: copy `lead` byte dau bang CPU de can thang
+     *   bien 4-byte, phan giua day qua DMA phan cung, phan duoi le copy bang CPU.
+     * - Neu sphy va dphy lech pha khac nhau: fallback copy theo byte bang CPU. */
+    uint32_t src_mis = (uint32_t)(sphy & 3ULL);
+    uint32_t dst_mis = (uint32_t)(dphy & 3ULL);
+    uint32_t lead_bytes = 0;
+    uint32_t aligned_len = 0;
+    uint32_t tail_bytes = 0;
+
+    if (src_mis == dst_mis) {
+      lead_bytes = (4U - src_mis) & 3U;
+      if (lead_bytes > chunk) lead_bytes = chunk;
+      uint32_t after_lead = chunk - lead_bytes;
+      aligned_len = after_lead & ~3U;
+      tail_bytes  = after_lead & 3U;
+    } else {
+      lead_bytes = chunk;
+    }
+
+    /* Copy phan dau le (neu co) de can bien 4-byte */
+    for (uint32_t b = 0; b < lead_bytes; b++) {
+      BYTE val = 0;
+      if (MEMPHY_read(caller->krnl->mram, sphy + b, &val) < 0 ||
+          MEMPHY_write(caller->krnl->mram, dphy + b, val) < 0) {
+        pthread_mutex_unlock(&mmvm_lock);
+        return -1;
+      }
+    }
 
     if (aligned_len > 0) {
-      /* [SYNC-DMA] Giu thu tu FIFO bang dma_submit_lock, nhung NHA dma_job_lock truoc khi goi
-       * do_dma_start() de tranh deadlock neu phan cung goi ngat hoan tat dong bo */
+      uint64_t dma_sphy = sphy + lead_bytes;
+      uint64_t dma_dphy = dphy + lead_bytes;
+      addr_t   dma_vsrc = cur_src + lead_bytes;
+      addr_t   dma_vdst = cur_dst + lead_bytes;
+
+      /* [SYNC-DMA] Giu thu tu FIFO bang dma_submit_lock, nha dma_job_lock & mmvm_lock
+       * truoc khi goi do_dma_start() de tranh deadlock */
       pthread_mutex_lock(&dma_submit_lock);
 
       pthread_mutex_lock(&dma_job_lock);
@@ -1348,22 +1395,22 @@ int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t
       dma_jobs[tail].mm        = caller->mm;
       dma_jobs[tail].src_rg    = (uint32_t)sourcergid;
       dma_jobs[tail].dst_rg    = (uint32_t)destinationrgid;
-      dma_jobs[tail].src_start = cur_src;
-      dma_jobs[tail].src_end   = cur_src + aligned_len;
-      dma_jobs[tail].dst_start = cur_dst;
-      dma_jobs[tail].dst_end   = cur_dst + aligned_len;
+      dma_jobs[tail].src_start = dma_vsrc;
+      dma_jobs[tail].src_end   = dma_vsrc + aligned_len;
+      dma_jobs[tail].dst_start = dma_vdst;
+      dma_jobs[tail].dst_end   = dma_vdst + aligned_len;
       dma_jobs[tail].len       = aligned_len;
       dma_job_count++;
       pthread_mutex_unlock(&dma_job_lock);
-       pthread_mutex_unlock(&mmvm_lock);
-      int rc = do_dma_start(caller, sphy, dphy, (uint64_t)aligned_len);
+      pthread_mutex_unlock(&mmvm_lock);
+
+      int rc = do_dma_start(caller, dma_sphy, dma_dphy, (uint64_t)aligned_len);
       if (rc >= 0) {
 #ifdef DMADEBUG
         printf("[Libmem_dma_memcpy] Return code: %d, Dua cong viec vao hang doi, RegionId Source: %d, RegionId Destination: %d\n",
                rc, sourcergid, destinationrgid);
 #endif
-      }else {
-        /* [SYNC-DMA] Hoan tac entry vua nap neu phan cung tu choi */
+      } else {
         pthread_mutex_lock(&dma_job_lock);
         if (dma_job_count > 0) dma_job_count--;
         pthread_mutex_unlock(&dma_job_lock);
@@ -1378,21 +1425,20 @@ int libmem_dma_memcpy(struct pcb_t *caller, uint32_t src, uint32_t dst, uint32_t
       }
 
 #ifdef DMADEBUG
-      printf("\tDMA: PID %u %s reg%u(rg%d) -> reg%u(rg%d), %u byte (phan chan DMA %u, le %u), CPU chay tiep\n",
+      printf("\tDMA: PID %u %s reg%u(rg%d) -> reg%u(rg%d), %u byte (dau %u, DMA %u, duoi %u), CPU chay tiep\n",
              caller->pid, rc == 0 ? "nap lenh" : "kenh ban, XEP HANG",
-             src, sourcergid, dst, destinationrgid, chunk, aligned_len, odd_bytes);
+             src, sourcergid, dst, destinationrgid, chunk, lead_bytes, aligned_len, tail_bytes);
 #endif
 
-      /* Khoa lai mmvm_lock de tiep tuc vong lap / copy phan duoi le */
       pthread_mutex_lock(&mmvm_lock);
     }
 
-    /* [SUA 4] Copy an toan 1..3 byte le cuoi cung (neu co) bang MEMPHY_read/write
-     * de khong cham vao cac byte ngoai pham vi [dphy, dphy + chunk - 1]. */
-    for (uint32_t b = 0; b < odd_bytes; b++) {
+    /* Copy phan duoi le 1..3 byte cuoi cung (neu co) */
+    uint32_t tail_off = lead_bytes + aligned_len;
+    for (uint32_t b = 0; b < tail_bytes; b++) {
       BYTE val = 0;
-      if (MEMPHY_read(caller->krnl->mram, sphy + aligned_len + b, &val) < 0 ||
-          MEMPHY_write(caller->krnl->mram, dphy + aligned_len + b, val) < 0) {
+      if (MEMPHY_read(caller->krnl->mram, sphy + tail_off + b, &val) < 0 ||
+          MEMPHY_write(caller->krnl->mram, dphy + tail_off + b, val) < 0) {
         pthread_mutex_unlock(&mmvm_lock);
         return -1;
       }
@@ -1420,8 +1466,8 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
   pthread_mutex_lock(&mmvm_lock);
   // B1: Kiem tra hai region va toan bo khoang copy truoc khi ghi du lieu
   if (caller == NULL || caller->mm == NULL || caller->krnl == NULL || caller->krnl->mm == NULL || size == 0){
-    pthread_mutex_unlock(&kmm_lock);
     pthread_mutex_unlock(&mmvm_lock);
+    pthread_mutex_unlock(&kmm_lock);
     return -1;
   }
   struct vm_rg_struct *user_region =  get_symrg_byid(caller->mm, (int)source);
@@ -1430,8 +1476,8 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
       get_symrg_byid(caller->krnl->mm, (int)destination);
 
   if (user_region == NULL || kernel_region == NULL){
-    pthread_mutex_unlock(&kmm_lock);
     pthread_mutex_unlock(&mmvm_lock);
+    pthread_mutex_unlock(&kmm_lock);
     return -1;
   }
     // B2: Lay VMA ID tu tung region
@@ -1439,8 +1485,8 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
   int kernel_vmaid = kernel_region->vmaid;
 
   if (user_vmaid < 0 || kernel_vmaid < 0){
-    pthread_mutex_unlock(&kmm_lock);
     pthread_mutex_unlock(&mmvm_lock);
+    pthread_mutex_unlock(&kmm_lock);
     return -1;
   
   }
@@ -1449,8 +1495,8 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
                           (int)source, offset, size) < 0 ||
       validate_mem_region(caller->krnl->mm, kernel_vmaid,
                           (int)destination, offset, size) < 0){
-      pthread_mutex_unlock(&kmm_lock);
       pthread_mutex_unlock(&mmvm_lock);
+      pthread_mutex_unlock(&kmm_lock);
       return -1;
   }
   // B4: Copy tung byte tu User MM sang Kernel MM
@@ -1462,13 +1508,14 @@ int libkmem_copy_from_user(struct pcb_t *caller, uint32_t source, uint32_t desti
                         (int)source, offset + i, &data) < 0 ||
         __write_kernel_mem(caller, kernel_vmaid,
                            (int)destination, offset + i, data) < 0){
-      pthread_mutex_unlock(&kmm_lock);
       pthread_mutex_unlock(&mmvm_lock);
+      pthread_mutex_unlock(&kmm_lock);
       return -1;
     }
   }
+   pthread_mutex_unlock(&mmvm_lock);
    pthread_mutex_unlock(&kmm_lock);
-    pthread_mutex_unlock(&mmvm_lock);
+   
   return 0;
 }
 int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destination, uint32_t offset, uint32_t size)
@@ -1485,8 +1532,8 @@ int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destina
   if (caller == NULL || caller->mm == NULL ||
       caller->krnl == NULL || caller->krnl->mm == NULL ||
       size == 0){
-      pthread_mutex_unlock(&kmm_lock);
-      pthread_mutex_unlock(&mmvm_lock); 
+      pthread_mutex_unlock(&mmvm_lock);
+      pthread_mutex_unlock(&kmm_lock); 
       return -1;
   }
   // B1: Lay region tu Kernel MM va User MM
@@ -1497,8 +1544,8 @@ int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destina
       get_symrg_byid(caller->mm, (int)destination);
 
   if (kernel_region == NULL || user_region == NULL){
-    pthread_mutex_unlock(&kmm_lock);
     pthread_mutex_unlock(&mmvm_lock);
+    pthread_mutex_unlock(&kmm_lock);
     return -1;
   }
   // B2: Lay VMA ID tu tung region
@@ -1507,8 +1554,8 @@ int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destina
 
   if (kernel_vmaid < 0 || user_vmaid < 0)
     {
-      pthread_mutex_unlock(&kmm_lock);
       pthread_mutex_unlock(&mmvm_lock);
+      pthread_mutex_unlock(&kmm_lock);
       return -1;
     }
   // B3: Kiem tra toan bo khoang copy truoc khi ghi
@@ -1516,8 +1563,8 @@ int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destina
                           (int)source, offset, size) < 0 ||
       validate_mem_region(caller->mm, user_vmaid,
                           (int)destination, offset, size) < 0){
-      pthread_mutex_unlock(&kmm_lock);
       pthread_mutex_unlock(&mmvm_lock);
+      pthread_mutex_unlock(&kmm_lock);
       return -1;
   }
   // B4: Copy tung byte tu Kernel MM sang User MM
@@ -1529,13 +1576,13 @@ int libkmem_copy_to_user(struct pcb_t *caller, uint32_t source, uint32_t destina
                           (int)source, offset + i, &data) < 0 ||
         __write_user_mem(caller, user_vmaid,
                          (int)destination, offset + i, data) < 0){
-      pthread_mutex_unlock(&kmm_lock);
       pthread_mutex_unlock(&mmvm_lock);
+      pthread_mutex_unlock(&kmm_lock);
       return -1;
     }
   }
-  pthread_mutex_unlock(&kmm_lock);
   pthread_mutex_unlock(&mmvm_lock);
+  pthread_mutex_unlock(&kmm_lock);
   return 0;
 }
 
