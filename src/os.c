@@ -316,7 +316,11 @@ static void * cpu_routine(void * args) {
 		}
 
 		/* Run current process */
+		int old_pc = proc->pc;
 		run(proc);
+		printf("[EXEC] CPU=%d PID=%d PC=%d -> %d\n",
+       id, proc->pid, old_pc, proc->pc);
+
 		time_left--;
 		next_slot(timer_id);
 	}

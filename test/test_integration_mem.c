@@ -460,16 +460,14 @@ static void run_it11(void)
     TEST_ASSERT_EQ(0, __alloc(&proc, VMA_MEDIUM, -1, 64, &user_addr));
     proc.regs[0] = user_addr;
     TEST_ASSERT_EQ(0, libkmem_malloc(&proc, 64, 5));
-    int kernel_rgid = -1;
-    TEST_ASSERT(get_symrg_byaddr(env.kmm.mmap->vm_mm, proc.regs[5],
-                                 &kernel_rgid) != NULL);
+
     TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0x4B, 0, 0));
-    TEST_ASSERT_EQ(0, libkmem_copy_from_user(&proc, 0, (uint32_t)kernel_rgid, 0, 1));
+    TEST_ASSERT_EQ(0, libkmem_copy_from_user(&proc, 0, 5, 0, 1));
 
     TEST_ASSERT_EQ(-1, libwrite(&proc, (BYTE)0xFF, 5, 0));
 
     TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0x00, 0, 0));
-    TEST_ASSERT_EQ(0, libkmem_copy_to_user(&proc, (uint32_t)kernel_rgid, 0, 0, 1));
+    TEST_ASSERT_EQ(0, libkmem_copy_to_user(&proc, 5, 0, 0, 1));
 
     uint32_t dst_reg = 7;
     TEST_ASSERT_EQ(0, libread(&proc, 0, 0, &dst_reg));
@@ -492,16 +490,13 @@ static void run_it12(void)
     addr_t page_sz = (addr_t)test_memphy_page_size();
     TEST_ASSERT_EQ(0, liballoc(&proc, 2 * page_sz, 0));
     TEST_ASSERT_EQ(0, libkmem_malloc(&proc, (uint32_t)(2 * page_sz), 1));
-    int kernel_rgid = -1;
-    TEST_ASSERT(get_symrg_byaddr(env.kmm.mmap->vm_mm, proc.regs[1],
-                                 &kernel_rgid) != NULL);
 
     addr_t start = page_sz - 16;
     for (int i = 0; i < 32; ++i) {
         TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)(0x50 + i), 0, start + (addr_t)i));
     }
 
-    TEST_ASSERT_EQ(0, libkmem_copy_from_user(&proc, 0, (uint32_t)kernel_rgid, start, 32));
+    TEST_ASSERT_EQ(0, libkmem_copy_from_user(&proc, 0, 1, start, 32));
 
     addr_t kpte1 = pte_get_entry(&env.kmm, 1, &proc);
     TEST_ASSERT(PAGING_PAGE_PRESENT(kpte1) != 0);
@@ -526,21 +521,18 @@ static void run_it13(void)
     addr_t page_sz = (addr_t)test_memphy_page_size();
     TEST_ASSERT_EQ(0, liballoc(&proc, 2 * page_sz, 0));
     TEST_ASSERT_EQ(0, libkmem_malloc(&proc, (uint32_t)(2 * page_sz), 1));
-    int kernel_rgid = -1;
-    TEST_ASSERT(get_symrg_byaddr(env.kmm.mmap->vm_mm, proc.regs[1],
-                                 &kernel_rgid) != NULL);
 
     addr_t start = page_sz - 16;
     for (int i = 0; i < 32; ++i) {
         TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)(0x70 + i), 0, start + (addr_t)i));
     }
-    TEST_ASSERT_EQ(0, libkmem_copy_from_user(&proc, 0, (uint32_t)kernel_rgid, start, 32));
+    TEST_ASSERT_EQ(0, libkmem_copy_from_user(&proc, 0, 1, start, 32));
 
     for (int i = 0; i < 32; ++i) {
         TEST_ASSERT_EQ(0, libwrite(&proc, (BYTE)0xEE, 0, start + (addr_t)i));
     }
 
-    TEST_ASSERT_EQ(0, libkmem_copy_to_user(&proc, (uint32_t)kernel_rgid, 0, start, 32));
+    TEST_ASSERT_EQ(0, libkmem_copy_to_user(&proc, 1, 0, start, 32));
 
     uint32_t dst_reg = 7;
     for (int i = 0; i < 32; ++i) {
