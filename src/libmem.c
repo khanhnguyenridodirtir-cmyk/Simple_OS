@@ -150,7 +150,7 @@ int enlist_vm_freerg_list(struct mm_struct *mm, struct vm_rg_struct *rg_elmt, in
     return -1;
 
   // B3 : lay con con tro vm_freerg_list va xet hop le cua con tro
-  struct vm_area_struct* currentvma =  get_vma_by_num(mm, vmaid);
+  struct vm_area_struct* currentvma =  get_vma_by_num_locked(mm, vmaid);
   if(currentvma==NULL){
     return -1;
   }
@@ -193,7 +193,7 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
   }
   struct vm_rg_struct rgnode;
   // Lay con tro vung nho vma truoc de chuan bi lay freerg
-  struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
+  struct vm_area_struct *cur_vma = get_vma_by_num_locked(caller->mm, vmaid);
   if(cur_vma == NULL)
   {
     // Neu ko tim thay vung nho nay thi out 
@@ -277,7 +277,7 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
 
    // B1_b  : Lay region ra  va xac dinh tinh hop le cua no
    struct vm_area_struct *cur_vma =
-       get_vma_by_num(caller->mm, vmaid);
+       get_vma_by_num_locked(caller->mm, vmaid);
 
    if (cur_vma == NULL) {
   
@@ -435,7 +435,7 @@ static int pg_getpage_locked(struct mm_struct *mm, addr_t pgn, int *fpn,
         return -1;
 
     int is_kernel_mm = (mm == caller->krnl->mm);
-    uint64_t pte = pte_get_entry(mm, pgn, caller);
+    uint64_t pte = pte_get_entry_locked(mm, pgn, caller);
 
     /* B2: Page already present in RAM */
     if (PAGING_PAGE_PRESENT(pte)) {
@@ -453,7 +453,7 @@ static int pg_getpage_locked(struct mm_struct *mm, addr_t pgn, int *fpn,
         if (MEMPHY_get_freefp(caller->krnl->mram, &kernel_fpn) < 0)
             return -1;
 
-        if (pte_set_fpn(mm, pgn, kernel_fpn, caller) < 0) {
+        if (pte_set_fpn_locked(mm, pgn, kernel_fpn, caller) < 0) {
             MEMPHY_put_freefp(caller->krnl->mram, kernel_fpn);
             return -1;
         }
@@ -488,7 +488,7 @@ static int pg_getpage_locked(struct mm_struct *mm, addr_t pgn, int *fpn,
         if (vic_proc == NULL)
          return -1;
         
-        vicpte = pte_get_entry(vic_proc->mm, vicpgn, vic_proc);
+        vicpte = pte_get_entry_locked(vic_proc->mm, vicpgn, vic_proc);
         if (!PAGING_PAGE_PRESENT(vicpte)) {
             enlist_pgn_node(&vic_proc->mm->fifo_pgn, vicpgn);
             return -1;
@@ -518,7 +518,7 @@ static int pg_getpage_locked(struct mm_struct *mm, addr_t pgn, int *fpn,
             return -1;
         }
 
-        if (pte_set_swap(vic_proc, vicpgn, 0, swpfpn) < 0) {
+        if (pte_set_swap_locked(vic_proc, vicpgn, 0, swpfpn) < 0) {
             MEMPHY_put_freefp(caller->krnl->active_mswp, swpfpn);
             enlist_pgn_node(&vic_proc->mm->fifo_pgn, vicpgn);
             return -1;
@@ -550,13 +550,13 @@ static int pg_getpage_locked(struct mm_struct *mm, addr_t pgn, int *fpn,
     }
 
     /* B6: Update PTE and FIFO */
-    if (pte_set_fpn(mm, pgn, tgtfpn, caller) < 0) {
+    if (pte_set_fpn_locked(mm, pgn, tgtfpn, caller) < 0) {
         MEMPHY_put_freefp(caller->krnl->mram, tgtfpn);
         return -1;
     }
 
     if (enlist_pgn_node(&mm->fifo_pgn, pgn) < 0) {
-        pte_set_entry(mm, pgn, pte, caller);
+        pte_set_entry_locked(mm, pgn, pte, caller);
         MEMPHY_put_freefp(caller->krnl->mram, tgtfpn);
         return -1;
     }
@@ -623,8 +623,8 @@ static int pg_getval_locked(struct mm_struct *mm, addr_t addr, BYTE *data,
   if (_syscall(caller->krnl, caller->pid, 17, &regs) < 0)
     return -1;
 
+  mm->mem_access_count++; /* +1 lan doc du lieu vat ly tu RAM (MEMPHY_read) */
   *data = (BYTE)regs.a3;
-
   return 0;
  
 
@@ -683,6 +683,8 @@ static int pg_setval_locked(struct mm_struct *mm, addr_t addr, BYTE value,
 
   if (_syscall(caller->krnl, caller->pid, 17, &regs) < 0)
     return -1;
+  
+  mm->mem_access_count++; /* +1 lan ghi du lieu vat ly xuong RAM (MEMPHY_write) */
   return 0;
 }
 
@@ -708,7 +710,7 @@ int __read(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE *data)
   if( caller==NULL || caller->mm==NULL) return -1;
   
   struct vm_rg_struct *currg = get_symrg_byid(caller->mm, rgid);
-  struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
+  struct vm_area_struct *cur_vma = get_vma_by_num_locked(caller->mm, vmaid);
 
   /* TODO Invalid memory identify */
  if (currg == NULL || cur_vma == NULL ||currg->vmaid != vmaid||
@@ -776,7 +778,7 @@ int libread(
 
 #endif
   #ifdef PAGETBL_DUMP
-  print_pgtbl(proc, 0, -1); // print max TBL
+  print_pgtbl_locked(proc, 0, -1); // print max TBL
 #endif
   pthread_mutex_unlock(&mmvm_lock);
   return val;
@@ -797,7 +799,7 @@ int __write(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE value
   
   // Note: Consistent with __read, using caller->mm for User space
   struct vm_rg_struct *currg = get_symrg_byid(caller->mm, rgid);
-  struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
+  struct vm_area_struct *cur_vma = get_vma_by_num_locked(caller->mm, vmaid);
 
   if (currg == NULL || cur_vma == NULL ||currg->vmaid != vmaid||
     (currg->rg_start == 0 && currg->rg_end == 0) ||
@@ -868,7 +870,7 @@ int libwrite(
   printf("[VERIFY Write] PID=%d reg=%d offset=%ld -> val=%d\n", proc->pid, destination, offset, data);
 #endif
 #ifdef PAGETBL_DUMP
-  print_pgtbl(proc, 0, -1); // print max TBL
+  print_pgtbl_locked(proc, 0, -1); // print max TBL
 #endif
   pthread_mutex_unlock(&mmvm_lock);
   return val;
@@ -885,7 +887,7 @@ static int get_free_vmrg_area_mm(struct mm_struct *mm, int vmaid, addr_t size,
   // B1: Kiem tra dau vao va VMA
   if  (newrg == NULL || size <= 0)
     return -1;
-  struct vm_area_struct *vma = get_vma_by_num(mm, vmaid);
+  struct vm_area_struct *vma = get_vma_by_num_locked(mm, vmaid);
   if (vma == NULL)
     return -1;
 
@@ -935,7 +937,7 @@ static int validate_mem_region(struct mm_struct *mm, int vmaid, int rgid,
   if (mm == NULL || size == 0)
     return -1;
   struct vm_rg_struct *region = get_symrg_byid(mm, rgid);
-  struct vm_area_struct *vma = get_vma_by_num(mm, vmaid);
+  struct vm_area_struct *vma = get_vma_by_num_locked(mm, vmaid);
   
   if (region == NULL || vma == NULL ||
     region->vmaid != vmaid ||
@@ -1024,7 +1026,7 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
 
   // B2: Lay Kernel MM, VMA va symbol entry tu cau truc cua OS
   struct mm_struct *kmm = caller->krnl->mm;
-  struct vm_area_struct *kvma = get_vma_by_num(kmm, vmaid);
+  struct vm_area_struct *kvma = get_vma_by_num_locked(kmm, vmaid);
   struct vm_rg_struct *symrg = get_symrg_byid(kmm, rgid);
   if (kvma == NULL || symrg == NULL ||
       symrg->rg_start != 0 || symrg->rg_end != 0)
@@ -1077,7 +1079,7 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
       return -1;
     }
 
-    if (vm_map_kernel(caller, kvma->vm_start, kvma->vm_end,
+    if (vm_map_kernel_locked(caller, kvma->vm_start, kvma->vm_end,
                       map_start, (int)page_count, newrg) == (addr_t)-1)
     {
       free(newrg);
@@ -1688,7 +1690,7 @@ int __read_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, 
   
   struct mm_struct *kmm = caller->krnl->mm;
   struct vm_rg_struct *region = get_symrg_byid(kmm, rgid);
-  struct vm_area_struct *vma = get_vma_by_num(kmm, vmaid);
+  struct vm_area_struct *vma = get_vma_by_num_locked(kmm, vmaid);
 
   // B2: Xac nhan region da cap phat va offset nam trong bien
   if (region == NULL || vma == NULL || region->vmaid != vmaid||
@@ -1724,7 +1726,7 @@ int __write_kernel_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset,
   
   struct mm_struct *kmm = caller->krnl->mm;
   struct vm_rg_struct *region = get_symrg_byid(kmm, rgid);
-  struct vm_area_struct *vma = get_vma_by_num(kmm, vmaid);
+  struct vm_area_struct *vma = get_vma_by_num_locked(kmm, vmaid);
 
   // B2: Xac nhan region da cap phat va offset hop le
   if (region == NULL || vma == NULL ||region->vmaid != vmaid||
@@ -1759,7 +1761,7 @@ int __read_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BY
     return -1;
 
   struct vm_rg_struct *region = get_symrg_byid(caller->mm, rgid);
-  struct vm_area_struct *vma = get_vma_by_num(caller->mm, vmaid);
+  struct vm_area_struct *vma = get_vma_by_num_locked(caller->mm, vmaid);
 
   // B2: Xac nhan region da cap phat va offset nam trong bien
   if (region == NULL || vma == NULL || region->vmaid!=vmaid ||
@@ -1795,7 +1797,7 @@ int __write_user_mem(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, B
 
   
   struct vm_rg_struct *region = get_symrg_byid(caller->mm, rgid);
-  struct vm_area_struct *vma = get_vma_by_num(caller->mm, vmaid);
+  struct vm_area_struct *vma = get_vma_by_num_locked(caller->mm, vmaid);
 
   // B2: Xac nhan region da cap phat va offset hop le
   if (region == NULL || vma == NULL ||region->vmaid!=vmaid ||
@@ -1896,7 +1898,7 @@ int free_pcb_memph(struct pcb_t *caller)
 
     for (addr_t pgn = start_pgn; pgn < end_pgn; ++pgn)
     {
-      addr_t pte = pte_get_entry(mm, pgn, caller);
+      addr_t pte = pte_get_entry_locked(mm, pgn, caller);
 
       if (pte == 0)
         continue;
@@ -1951,7 +1953,7 @@ int find_victim_page_locked(struct mm_struct *mm, addr_t *retpgn)
 
   while (curr != NULL)
   {
-    addr_t pte = pte_get_entry(mm, curr->pgn, NULL);
+    addr_t pte = pte_get_entry_locked(mm, curr->pgn, NULL);
     /* [SYNC-MM] Khong chon trang dang truyen DMA lam victim de tranh bi swap-out */
     if (PAGING_PAGE_PRESENT(pte) && !is_page_dma_pinned(mm, curr->pgn))
     {
@@ -2010,7 +2012,7 @@ int get_free_vmrg_area(struct pcb_t *caller, int vmaid, uint64_t size, struct vm
 
   }
   // B2  lay khu vuc nho va con tro cua vung free (ranh roi) de dung
-  struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
+  struct vm_area_struct *cur_vma = get_vma_by_num_locked(caller->mm, vmaid);
   
   struct vm_rg_struct *rgit = ( (cur_vma ==NULL)? NULL:cur_vma->vm_freerg_list );
 

@@ -35,7 +35,7 @@ extern addr_t vm_map_ram_locked(struct pcb_t *caller, addr_t astart,
  * returning the next larger ID for a missing ID can make an allocation land
  * in the wrong SMALL/MEDIUM/LARGE area.
  */
-struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
+struct vm_area_struct *get_vma_by_num_locked(struct mm_struct *mm, int vmaid)
 {
   struct vm_area_struct *vma;
 
@@ -50,6 +50,14 @@ struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
   return NULL;
 }
 
+struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
+{
+  libmem_mmvm_lock();
+  struct vm_area_struct *ret = get_vma_by_num_locked(mm, vmaid);
+  libmem_mmvm_unlock();
+  return ret;
+}
+
 /*
  * __mm_swap_page - Thực hiện sao chép dữ liệu một trang vật lý từ RAM ra vùng nhớ SWAP
  * @caller: Tiến trình yêu cầu hoán đổi trang
@@ -57,12 +65,20 @@ struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
  * @swpfpn: Frame Page Number đích trên thiết bị SWAP (active_mswp)
  * Return: 0 nếu thành công
  */
-int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
+int __mm_swap_page_locked(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
 {
   if (caller == NULL || caller->krnl == NULL || caller->krnl->mram == NULL || caller->krnl->active_mswp == NULL)
     return -1;
 
   return __swap_cp_page(caller->krnl->mram, vicfpn, caller->krnl->active_mswp, swpfpn);
+}
+
+int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
+{
+  libmem_mmvm_lock();
+  int ret = __mm_swap_page_locked(caller, vicfpn, swpfpn);
+  libmem_mmvm_unlock();
+  return ret;
 }
 
 /*get_vm_area_node - get vm area for a number of pages
@@ -73,7 +89,7 @@ int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
  *@vmaend: vma end
  *
  */
-struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, addr_t alignedsz)
+static struct vm_rg_struct *get_vm_area_node_at_brk_locked(struct pcb_t *caller, int vmaid, addr_t alignedsz)
 {
   struct mm_struct *mm;
   struct vm_area_struct *vma;
@@ -88,7 +104,7 @@ struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, ad
       (alignedsz % PAGING64_PAGESZ) != 0)
     return NULL;
 
-  vma = get_vma_by_num(mm, vmaid);
+  vma = get_vma_by_num_locked(mm, vmaid);
   if (vma == NULL || vma->sbrk < vma->vm_start ||
       vma->sbrk > vma->vm_end ||
       alignedsz > vma->vm_end - vma->sbrk)
@@ -101,6 +117,14 @@ struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, ad
   newrg->vmaid = vmaid;
   return newrg;
 }
+
+struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, addr_t alignedsz)
+{
+  libmem_mmvm_lock();
+  struct vm_rg_struct *ret = get_vm_area_node_at_brk_locked(caller, vmaid, alignedsz);
+  libmem_mmvm_unlock();
+  return ret;
+}
 /*validate_overlap_vm_area
  *@caller: caller
  *@vmaid: ID vm area to alloc memory region
@@ -108,7 +132,7 @@ struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, ad
  *@vmaend: vma end
  *
  */
-int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, addr_t vmaend)
+static int validate_overlap_vm_area_locked(struct pcb_t *caller, int vmaid, addr_t vmastart, addr_t vmaend)
 {
   struct mm_struct *mm;
   struct vm_area_struct *cur_vma;
@@ -122,7 +146,7 @@ int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, a
   if (mm == NULL || vmastart >= vmaend)
     return -1;
 
-  cur_vma = get_vma_by_num(mm, vmaid);
+  cur_vma = get_vma_by_num_locked(mm, vmaid);
   if (cur_vma == NULL ||
       cur_vma->vm_start > cur_vma->vm_end ||
       vmastart < cur_vma->vm_start ||
@@ -142,6 +166,14 @@ int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, a
   }
 
   return 0;
+}
+
+int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, addr_t vmaend)
+{
+  libmem_mmvm_lock();
+  int ret = validate_overlap_vm_area_locked(caller, vmaid, vmastart, vmaend);
+  libmem_mmvm_unlock();
+  return ret;
 }
 
 /* Round a non-zero byte count up to a page multiple without integer overflow. */
@@ -193,7 +225,7 @@ static int inc_vma_limit_locked(struct pcb_t *caller, int vmaid,
       caller->krnl->mram == NULL || align_size_to_page(inc_sz, &aligned_inc_sz) < 0)
     return -1;
 
-  vma = get_vma_by_num(mm, vmaid);
+  vma = get_vma_by_num_locked(mm, vmaid);
   if (vma == NULL)
     return -1;
 
@@ -204,7 +236,7 @@ static int inc_vma_limit_locked(struct pcb_t *caller, int vmaid,
     return -1;
 
   new_sbrk = old_sbrk + aligned_inc_sz;
-  if (validate_overlap_vm_area(caller, vmaid, old_sbrk, new_sbrk) < 0)
+  if (validate_overlap_vm_area_locked(caller, vmaid, old_sbrk, new_sbrk) < 0)
     return -1;
 
   page_count = aligned_inc_sz / PAGING64_PAGESZ;

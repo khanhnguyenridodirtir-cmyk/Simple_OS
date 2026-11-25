@@ -77,4 +77,15 @@
 int mm_free_page_tables(struct mm_struct *mm);
 int free_pcb_memph(struct pcb_t *proc);
 
+addr_t pte_get_entry_locked(struct mm_struct *mm, addr_t pgn, struct pcb_t *caller);
+int pte_set_fpn_locked(struct mm_struct *mm, addr_t pgn, addr_t fpn, struct pcb_t *caller);
+int pte_set_swap_locked(struct pcb_t *caller, addr_t pgn, int swptyp, addr_t swpoff);
+int pte_set_entry_locked(struct mm_struct *mm, addr_t pgn, uint64_t pte_val, struct pcb_t *caller);
+addr_t vm_map_kernel_locked(struct pcb_t *caller, addr_t astart, addr_t aend,
+                            addr_t mapstart, int incpgnum, struct vm_rg_struct *ret_rg);
+int print_pgtbl_locked(struct pcb_t *caller, addr_t start, addr_t end);
+
+struct vm_area_struct *get_vma_by_num_locked(struct mm_struct *mm, int vmaid);
+int __mm_swap_page_locked(struct pcb_t *caller, addr_t vicfpn, addr_t swpfpn);
+
 #endif
