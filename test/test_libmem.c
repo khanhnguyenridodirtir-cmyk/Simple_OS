@@ -655,6 +655,20 @@ static void run_lm20(void)
     TEST_ASSERT(PAGING_PAGE_PRESENT(pte_get_entry(&env.kmm, 1, &proc)) != 0);
     TEST_ASSERT(env.kmm.fifo_pgn == NULL);
 
+    /* libfree should find this address in Kernel MM, clear the register and
+     * return the virtual region so a later kernel allocation can reuse it. */
+    TEST_ASSERT_EQ(0, libfree(&proc, 0));
+    TEST_ASSERT_EQ((addr_t)-1, proc.regs[0]);
+    TEST_ASSERT_EQ(0, env.kmm.symrgtbl[0].rg_start);
+    TEST_ASSERT_EQ(0, env.kmm.symrgtbl[0].rg_end);
+    TEST_ASSERT_EQ(-1, libfree(&proc, 0));
+
+    TEST_ASSERT_EQ(0, libkmem_malloc(&proc, (uint32_t)(2 * page_sz), 1));
+    TEST_ASSERT_EQ(0, proc.regs[1]);
+    TEST_ASSERT_EQ(2 * page_sz, env.kmm.symrgtbl[0].rg_end);
+    TEST_ASSERT(PAGING_PAGE_PRESENT(pte_get_entry(&env.kmm, 0, &proc)) != 0);
+    TEST_ASSERT(PAGING_PAGE_PRESENT(pte_get_entry(&env.kmm, 1, &proc)) != 0);
+
     lm_proc_destroy(&proc, &mm);
     lm_env_destroy(&env);
 }

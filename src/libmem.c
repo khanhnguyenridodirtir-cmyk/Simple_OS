@@ -383,36 +383,51 @@ int select_vmaid(addr_t size)
 
 int libfree(struct pcb_t *proc, uint32_t reg_index)
 {
-    if (proc == NULL || proc->mm == NULL)
+    if (proc == NULL || proc->mm == NULL ||
+        proc->krnl == NULL || proc->krnl->mm == NULL)
         return -1;
 
     if (reg_index >= MAXREG)
         return -1;
-    pthread_mutex_lock(&mmvm_lock);
+
     addr_t addr = proc->regs[reg_index];
 
-   
-    int rgid = -1;
+    if (addr == (addr_t)-1)
+        return -1;
 
+    
+    pthread_mutex_lock(&kmm_lock);
+    pthread_mutex_lock(&mmvm_lock);
+
+    int rgid = -1;
+    int ret = -1;
+
+    // Tìm trong User MM
     struct vm_rg_struct *rgnode =
         get_symrg_byaddr(proc->mm, addr, &rgid);
 
-    if (rgnode == NULL ||is_rg_dma_busy(proc->pid, rgid) ){
-        pthread_mutex_unlock(&mmvm_lock);
-        return -1;
-    }
-    int actual_vmaid = rgnode->vmaid;
-    
-    int val = __free(proc, actual_vmaid, rgid);
-
-    if (val < 0)
+    if (rgnode != NULL && rgid >= 0)
     {
-      pthread_mutex_unlock(&mmvm_lock);
-      return -1;
+        if (!is_rg_dma_busy(proc->pid, rgid))
+            ret = __free(proc, rgnode->vmaid, rgid);
     }
-    proc->regs[reg_index] = (addr_t)-1;
+    else
+    {
+        // Tim trong kernel mem
+        rgid = -1;
+        rgnode = get_symrg_byaddr(proc->krnl->mm, addr, &rgid);
+
+        if (rgnode != NULL && rgid >= 0)
+            ret = __kmem_free(proc, rgnode->vmaid, rgid);
+    }
+
+    if (ret == 0)
+        proc->regs[reg_index] = (addr_t)-1;
+
     pthread_mutex_unlock(&mmvm_lock);
-    return 0;
+    pthread_mutex_unlock(&kmm_lock);
+
+    return ret;
 }
 /*pg_getpage - get the page in ram
  *@mm: memory region
@@ -1117,6 +1132,66 @@ addr_t __kmalloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t 
   return 0;
 }
 
+
+/* __kmem_free - release a region memory in Kernel MM
+ * @caller: process requesting memory release
+ * @vmaid: ID of the Kernel VMA
+ * @rgid: region ID in Kernel symbol table
+ */
+int __kmem_free(struct pcb_t *caller, int vmaid, int rgid)
+{
+    // B1: Validate input and Kernel MM
+    if (caller == NULL || caller->krnl == NULL ||
+        caller->krnl->mm == NULL)
+        return -1;
+
+    struct mm_struct *kmm = caller->krnl->mm;
+
+    if (rgid < 0 || rgid >= PAGING_MAX_SYMTBL_SZ ||
+        vmaid < 0)
+        return -1;
+
+    // B2: Get Kernel VMA and allocated region
+    struct vm_area_struct *cur_vma =
+        get_vma_by_num_locked(kmm, vmaid);
+
+    struct vm_rg_struct *rgnode =
+        get_symrg_byid(kmm, rgid);
+
+    if (cur_vma == NULL ||
+        rgnode == NULL ||
+        rgnode->vmaid != vmaid ||
+        rgnode->vmaid < 0 ||
+        (rgnode->rg_start == 0 && rgnode->rg_end == 0) ||
+        rgnode->rg_start >= rgnode->rg_end)
+        return -1;
+
+    // B3: Create a free region node
+    struct vm_rg_struct *freerg_node =
+        malloc(sizeof(struct vm_rg_struct));
+
+    if (freerg_node == NULL)
+        return -1;
+
+    freerg_node->vmaid = vmaid;
+    freerg_node->rg_start = rgnode->rg_start;
+    freerg_node->rg_end = rgnode->rg_end;
+    freerg_node->rg_next = NULL;
+
+    // B4: Return the region to Kernel VMA free list
+    if (enlist_vm_freerg_list(kmm, freerg_node, vmaid) < 0) {
+        free(freerg_node);
+        return -1;
+    }
+
+    // B5: Clear the Kernel symbol table entry
+    rgnode->rg_start = 0;
+    rgnode->rg_end = 0;
+    rgnode->vmaid = -1;
+    rgnode->rg_next = NULL;
+
+    return 0;
+}
 
 /*========================DMA HELPER=====================*/
 /* ============================================================================
