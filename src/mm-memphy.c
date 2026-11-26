@@ -270,7 +270,7 @@ int MEMPHY_get_freefp(struct memphy_struct *mp, addr_t *retfpn)
  */
 int MEMPHY_dump(struct memphy_struct *mp)
 {
-   if (mp == NULL || mp->storage == NULL) // <-- THÊM DÒNG NÀY
+   if (mp == NULL || mp->storage == NULL) 
       return -1;
    pthread_mutex_lock(&mp->lock);
   /*
