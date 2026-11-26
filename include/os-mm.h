@@ -116,6 +116,10 @@ struct mm_struct {
    addr_t *pud;
    addr_t *pmd;
    addr_t *pt;
+
+   /* Thong ke hieu nang va bo nho phan trang 5 cap */
+   uint64_t mem_access_count;     /* Tong so lan truy cap bo nho (bang trang + du lieu RAM) */
+   uint64_t pgtbl_storage_bytes;  /* Tong dung luong RAM da cap cho cac bang trang (bytes) */
 #else
    uint32_t *pgd;
 #endif

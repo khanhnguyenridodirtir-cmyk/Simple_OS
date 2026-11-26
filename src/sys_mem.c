@@ -55,18 +55,18 @@ int __sys_memmap(struct krnl_t *krnl, uint32_t pid, struct sc_regs* regs)
    switch (memop) {
    case SYSMEM_MAP_OP:
             /* Reserved process case*/
-			libmem_mmvm_lock();
 			ret = vmap_pgd_memset(caller, regs->a2, regs->a3);
-			libmem_mmvm_unlock();
             break;
    case SYSMEM_INC_OP:
             ret= inc_vma_limit(caller, regs->a2, regs->a3);
             break;
    case SYSMEM_SWP_OP:
             if (regs->a4 == 0)
-                ret=__mm_swap_page(caller, regs->a2, regs->a3); // RAM -> SWAP
-            else
-                ret=__swap_cp_page(krnl->active_mswp, regs->a3, krnl->mram, regs->a2); // SWAP -> RAM
+                ret =__mm_swap_page_locked(caller, regs->a2, regs->a3); // RAM -> SWAP
+            else if (krnl != NULL)
+                ret =__swap_cp_page(krnl->active_mswp, regs->a3, krnl->mram, regs->a2); // SWAP -> RAM
+            else 
+                ret = -1;
             break;
    case SYSMEM_IO_READ:
             ret= MEMPHY_read(krnl->mram, regs->a2, &value);
