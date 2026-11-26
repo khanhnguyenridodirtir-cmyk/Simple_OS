@@ -70,7 +70,13 @@ int __mm_swap_page_locked(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
   if (caller == NULL || caller->krnl == NULL || caller->krnl->mram == NULL || caller->krnl->active_mswp == NULL)
     return -1;
 
-  return __swap_cp_page(caller->krnl->mram, vicfpn, caller->krnl->active_mswp, swpfpn);
+  struct memphy_struct *mram = caller->krnl->mram;
+  struct memphy_struct *mswp = caller->krnl->active_mswp;
+  if (vicfpn >= mram->maxsz / PAGING64_PAGESZ ||
+      swpfpn >= mswp->maxsz / PAGING64_PAGESZ)
+    return -1;
+  
+  return __swap_cp_page(mram, vicfpn, mswp, swpfpn);
 }
 
 int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
@@ -107,6 +113,7 @@ static struct vm_rg_struct *get_vm_area_node_at_brk_locked(struct pcb_t *caller,
   vma = get_vma_by_num_locked(mm, vmaid);
   if (vma == NULL || vma->sbrk < vma->vm_start ||
       vma->sbrk > vma->vm_end ||
+      (vma->sbrk % PAGING64_PAGESZ) != 0 ||
       alignedsz > vma->vm_end - vma->sbrk)
     return NULL;
 
