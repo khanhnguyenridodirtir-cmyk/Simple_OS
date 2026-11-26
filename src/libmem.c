@@ -45,7 +45,7 @@ struct victim_query {
 /*Bat dau khu vu khai bao ham helper*/
 
 // prototype tu che de giai phong bo nho
-int free_pcb_memph(struct pcb_t *caller);
+
 static int is_rg_dma_busy(uint32_t pid, int rgid);
 static int pg_getpage_locked(struct mm_struct *mm, addr_t pgn, int *fpn,
                              struct pcb_t *caller);
