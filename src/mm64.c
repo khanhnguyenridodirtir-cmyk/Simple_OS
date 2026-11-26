@@ -153,6 +153,9 @@ int get_pd_from_pagenum(addr_t pgn, addr_t* pgd, addr_t* p4d, addr_t* pud, addr_
 /* Ham phu tro lay hoac cap phat bang phan trang tang ke tiep */
 uint64_t* next_pgtbl(struct mm_struct *mm, uint64_t *tbl, addr_t idx, int alloc)
 {
+  if (tbl == NULL || idx >= PAGING64_PGB_SZ)
+    return NULL;
+  
   if (mm != NULL)
     mm->mem_access_count++; /* +1 lan truy cap bo nho de doc entry tbl[idx] */
 
@@ -363,6 +366,10 @@ int vmap_pgd_memset_locked(struct pcb_t *caller,
   // 2. Tinh so trang bat dau (start_pgn) tu dia chi ao (addr)
   addr_t start_pgn = addr >> PAGING64_ADDR_PT_SHIFT;
 
+  if (mm == NULL || pgnum <= 0 || (addr % PAGING64_PAGESZ) != 0 ||
+      start_pgn >= PAGING64_MAX_PGN || (addr_t)pgnum > PAGING64_MAX_PGN - start_pgn)
+    return -1;
+  
   // 3. Lap qua pgnum trang và set pattern
   uint64_t pattern = 0xdeadbeef;
   for (int pgit = 0; pgit < pgnum; pgit++) {
@@ -396,7 +403,10 @@ addr_t vmap_page_range_locked(struct pcb_t *caller,
   int pgit = 0;
   addr_t pgn = addr >> PAGING64_ADDR_PT_SHIFT;
   struct mm_struct *mm = (caller && caller->mm) ? caller->mm : ((caller && caller->krnl) ? caller->krnl->mm : NULL);
-
+  if (mm == NULL || pgnum <= 0 || (addr % PAGING64_PAGESZ) != 0 ||
+      pgn >= PAGING64_MAX_PGN || (addr_t)pgnum > PAGING64_MAX_PGN - pgn)
+    return -1;
+  
   if (ret_rg != NULL) {
     ret_rg->rg_start = addr;
     ret_rg->rg_end = addr + (addr_t)pgnum * PAGING64_PAGESZ;
@@ -408,9 +418,12 @@ addr_t vmap_page_range_locked(struct pcb_t *caller,
     if (fpit->fpn == (addr_t)-1) {
       // B1.1 : Truong hop RAM < 4KB (test 1K) -> xin frame SWAP va dua vao fifo_pgn
       addr_t swpfpn = 0;
-      if (MEMPHY_get_freefp(caller->krnl->active_mswp, &swpfpn) == 0) {
-        pte_set_swap_locked(caller, pgn + pgit, 0, swpfpn);
-       // enlist_pgn_node(&mm->fifo_pgn, pgn + pgit);
+      if (caller->krnl != NULL && caller->krnl->active_mswp != NULL &&
+          MEMPHY_get_freefp(caller->krnl->active_mswp, &swpfpn) == 0) {
+        if (pte_set_swap_locked(caller, pgn + pgit, 0, swpfpn) < 0) {
+          MEMPHY_put_freefp(caller->krnl->active_mswp, swpfpn);
+          return -1;
+        }
       }
     } else if (fpit->fpn & PENDING_SWP_FLAG) {
       // B1.2 : Trang da duoc alloc_pages_range day san ra SWAP -> gan PTE SWAP va dua vao fifo_pgn
@@ -452,11 +465,17 @@ addr_t vmap_page_range(struct pcb_t *caller,        // process call
  */
 addr_t alloc_pages_range_locked(struct pcb_t *caller, int req_pgnum, struct framephy_struct **frm_lst)
 {
+  if (caller == NULL || caller->krnl == NULL || caller->krnl->mram == NULL ||
+      frm_lst == NULL || req_pgnum <= 0)
+    return -1;
+  
   addr_t fpn = 0;
   int pgit;
   struct framephy_struct *head = NULL;
   struct framephy_struct *tail = NULL;
   struct mm_struct *mm = (caller && caller->mm) ? caller->mm : ((caller && caller->krnl) ? caller->krnl->mm : NULL);
+  if (mm == NULL)
+    return -1;
   struct memphy_struct *mram = caller->krnl->mram;
   struct memphy_struct *mswp = caller->krnl->active_mswp;
   
@@ -493,6 +512,11 @@ addr_t alloc_pages_range_locked(struct pcb_t *caller, int req_pgnum, struct fram
       {
         // B4 : Day trang victim da map tu RAM sang SWAP de lay lai vicfpn
         addr_t vicpte = pte_get_entry_locked(vic_proc->mm, vicpgn, vic_proc);
+        if (!PAGING_PAGE_PRESENT(vicpte)) {
+          enlist_pgn_node(&vic_proc->mm->fifo_pgn, vicpgn);
+          *frm_lst = head;
+          return -3000;
+        }
         addr_t vicfpn = PAGING_FPN(vicpte);
 
         if (mswp == NULL || MEMPHY_get_freefp(mswp, &swpfpn) != 0)
@@ -594,7 +618,13 @@ addr_t vm_map_ram_locked(struct pcb_t *caller, addr_t astart, addr_t aend,
                          addr_t mapstart, int incpgnum,
                          struct vm_rg_struct *ret_rg)
 {
-
+  if (caller == NULL || caller->krnl == NULL || ret_rg == NULL ||
+      incpgnum <= 0 || astart > aend ||
+      (mapstart % PAGING64_PAGESZ) != 0 ||
+      mapstart < astart || mapstart > aend ||
+      (addr_t)incpgnum > (aend - mapstart) / PAGING64_PAGESZ)
+    return -1;
+  
   struct framephy_struct *frm_lst = NULL;
   int ret_alloc = 0;
 
