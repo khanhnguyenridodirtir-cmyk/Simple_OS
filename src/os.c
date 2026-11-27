@@ -217,8 +217,9 @@ static void * cpu_routine(void * args) {
 			  && libmem_dma_inflight(proc->pid) == 0) {
 			// Nghia la con tro pc nay la tro xong toi lenh cuoi
 			  /* The porcess has finish it job */
+#ifdef SEE_PROGRAM_COUNTER
     			printf("\tCPU %d: Processed %2d has finished\n", id ,proc->pid);
-
+#endif
     			finish_proc(proc);
 
 #ifdef MM_PAGING
@@ -318,9 +319,10 @@ static void * cpu_routine(void * args) {
 		/* Run current process */
 		int old_pc = proc->pc;
 		run(proc);
+#ifdef SEE_PROGRAM_COUNTER
 		printf("[EXEC] CPU=%d PID=%d PC=%d -> %d\n",
        id, proc->pid, old_pc, proc->pc);
-
+#endif
 		time_left--;
 		next_slot(timer_id);
 	}
