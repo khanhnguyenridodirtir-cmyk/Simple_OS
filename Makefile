@@ -90,10 +90,6 @@ TEST_TV1_FLAGS = $(INC) -Itest -DMLQ_SCHED -std=gnu11 -Wall $(DEBUG)
 SCHED_SUPPORT_SRC = $(SRC)/sched.c $(SRC)/queue.c $(SRC)/timer.c
 
 all: os
-#mem sched os
-$(TEST_TV1_BIN): $(TEST_TV1_SRC)
-	$(CC) $(TEST_TV1_FLAGS) $^ -o $@ $(LIB)
-
 # Target dùng để test riêng phân hệ Bộ nhớ vật lý (test/test_mm_memphy.c)
 test_mem: $(OBJ) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o
 	$(CXX) $(LFLAGS) $(OBJ)/test_mm_memphy.o $(OBJ)/mm-memphy.o -o test_mem $(LIB)
