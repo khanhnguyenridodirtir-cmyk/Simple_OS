@@ -44,7 +44,8 @@ Trước khi biên dịch, có thể bật/tắt các tính năng và chế đ�
 | **`DMADEBUG`** *(trong `src/libmem.c`)* | *Bật khi cần debug* | In chi tiết quá trình cắt trang, căn lề 4-byte (`dau`, `DMA`, `duoi`), trạng thái xếp hàng DMA hoặc lý do từ chối tham số không hợp lệ. |
 
 > **Lưu ý:** Sau khi thay đổi bất kỳ cờ nào trong `include/os-cfg.h`, cần chạy `make clean` trước khi biên dịch lại để đảm bảo toàn bộ các tệp đối tượng (`.o`) được cập nhật đồng bộ.
-Hien tai dang bat cac co  
+Ghi chú: Trong nhóm các cờ debug, hiện hệ thống ưu tiên bật **PAGETBL_DUMP** để in cấu trúc bảng trang và ánh xạ vùng nhớ của tiến trình, giúp định dạng đầu ra bám sát nhất với các mẫu output chuẩn trong tài liệu đặc tả của môn học. Ngoài ra vì yêu cầu trong đặc tả có thêm thống kê số lần truy cập bộ nhớ nên khi bật **PAGETBL_DUMP** cũng sẽ hiện ra dòng log biểu thị điều đó.
+
 ## Build toàn bộ OS
 
 ```bash
